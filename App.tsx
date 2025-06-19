@@ -28,7 +28,7 @@ const shuffleArray = (array) => {
 
 export default function App() {
   const [screen, setScreen] = useState(Dimensions.get('window'));
-  const [groundY, setGroundY] = useState(screen.height - GROUND_HEIGHT - PLAYER_RADIUS * 2 - 10);
+  const [groundY, setGroundY] = useState(screen.height - GROUND_HEIGHT - PLAYER_RADIUS * 2);
 
   const [score, setScore] = useState(0);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
@@ -45,11 +45,14 @@ export default function App() {
     const subscription = Dimensions.addEventListener('change', ({ window }) => {
       setScreen(window);
       setGroundY(window.height - GROUND_HEIGHT - PLAYER_RADIUS * 2 - 10);
+      setPlayerX(window.width / 2 - PLAYER_RADIUS);
+      playerY.setValue(window.height - GROUND_HEIGHT - PLAYER_RADIUS * 2 - 10);
     });
     return () => subscription.remove();
   }, []);
 
   useEffect(() => {
+    // Synchronise la position verticale de la boule avec le sol à chaque changement de groundY
     playerY.setValue(groundY);
   }, [groundY]);
 
@@ -178,7 +181,7 @@ export default function App() {
             <Text style={styles.questionText}>{questionsData[currentQuestionIndex].question}</Text>
             <Text style={[styles.feedbackText, { color: feedback.startsWith('Correct') ? '#4CAF50' : '#F44336'}]}>{feedback}</Text>
         </View>
-        <View style={{width: 80}} /> {/* Espace vide pour équilibrer le flexbox */}
+        <View style={{width: 80}} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" />
       </View>
       
       {answerBlocks.map((block) => (
