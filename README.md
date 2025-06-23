@@ -38,4 +38,4 @@ MarioLikeGame est un mini-jeu éducatif en 2D développé avec React Native (Exp
 
 ---
 
-Amusez-vous bien avec MarioLikeGame ! 
+Amusez-vous bien avec MarioLikeGame ! "# klatareactnative1"  
