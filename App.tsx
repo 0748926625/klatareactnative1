@@ -1,4 +1,9 @@
 import React, { useRef, useState, useEffect } from 'react';
+import LoginScreen from './components/LoginScreen';
+import UserNameScreen from './components/UserNameScreen';
+import UserSelectScreen from './components/UserSelectScreen';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
 import { StyleSheet, View, Text, Animated, PanResponder, Dimensions, TouchableOpacity, ImageBackground, Image, Easing, FlatList, ScrollView } from 'react-native';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import * as Speech from 'expo-speech';
@@ -9,6 +14,7 @@ import splashImage from './assets/splash.jpg';
 import fireballImage from './assets/images/fireball.png';
 import { Audio } from 'expo-av';
 import MathRenderer from './MathRenderer';
+import SuiviScreen from './components/SuiviScreen';
 
 // Import des images pour les questions
 const questionImages = {
@@ -169,7 +175,7 @@ const questionsLibrary = {
         imgKey: "thales_fig4"
       },
       {
-        question: "\\begin{array}{c} \\text{Si } (AB) // (CD), \\text{ quelle égalité de quotients} \\\\ \\text{exprime la propriété de Thalès ?} \\end{array}",
+        question: "\\begin{array}{c} \\text{Si } (AB) // (CD), \\text{ quelle égalité de quotients} \\\\ \\text{exprime la propriété de Thalès ?} \\end.array}",
         texteOral: "Dans la figure ci-contre, on a la droite A B parallèle à la droite C D. Quelle égalité de quotients exprime la propriété de Thalès ?",
         correct: "\\frac{OA}{OD} = \\frac{OB}{OC}",
         wrongs: ["\\frac{OD}{OA} = \\frac{OC}{OB}", "\\frac{OA}{OB} = \\frac{OD}{OC}", "OA \\cdot OC = OD \\cdot OB"],
@@ -1054,6 +1060,8 @@ export default function App() {
   const [isChapterComplete, setIsChapterComplete] = useState(false);
   const [showBilan, setShowBilan] = useState(false);
   const [currentBilanIndex, setCurrentBilanIndex] = useState(0);
+  const [showSuivi, setShowSuivi] = useState(false);
+  const [userStats, setUserStats] = useState(null);
   
   const prevDirection = useRef('idle');
   const animationIntervalRef = useRef(null);
@@ -1084,6 +1092,52 @@ export default function App() {
   const menuTitleScaleAnim = useRef(new Animated.Value(0.9)).current;
   const menuTitlePulseAnim = useRef(new Animated.Value(1)).current;
   const menuTitleRotateAnim = useRef(new Animated.Value(0)).current;
+
+  const [userName, setUserName] = useState(null);
+  const [userList, setUserList] = useState([]);
+
+  // --- UTILS STATS ---
+  const getStatsKey = (user) => `USER_STATS_${user}`;
+
+  // Charger les stats de l'utilisateur courant
+  const loadUserStats = async (user) => {
+    if (!user) return { scores: [], erreurs: [] };
+    const raw = await AsyncStorage.getItem(getStatsKey(user));
+    return raw ? JSON.parse(raw) : { scores: [], erreurs: [] };
+  };
+
+  // Sauvegarder les stats de l'utilisateur courant
+  const saveUserStats = async (user, stats) => {
+    if (!user) return;
+    await AsyncStorage.setItem(getStatsKey(user), JSON.stringify(stats));
+  };
+
+  // Appeler ceci à la fin de partie/chapitre
+  const saveCurrentSessionStats = async () => {
+    if (!userName) return;
+    const stats = await loadUserStats(userName);
+    // Ajout du score de la session
+    const maxScore = currentQuestions.length * 10;
+    const noteSur20 = maxScore > 0 ? (score / maxScore) * 20 : 0;
+    const sessionScore = {
+      date: new Date().toISOString(),
+      score,
+      noteSur20,
+      nbQuestions: currentQuestions.length,
+      temps: 0, // à brancher si tu as le temps passé
+      chapitre: selectedChapter || 'Tous les chapitres',
+    };
+    stats.scores.push(sessionScore);
+    // Ajout des erreurs de la session
+    missedQuestions.forEach(q => {
+      stats.erreurs.push({
+        question: q.question,
+        date: new Date().toISOString(),
+        chapitre: selectedChapter || 'Tous les chapitres',
+      });
+    });
+    await saveUserStats(userName, stats);
+  };
 
   // --- HOOKS D'EFFET ---
 
@@ -1618,8 +1672,9 @@ export default function App() {
     })
   ).current;
 
-  const handleRestart = () => {
-    Speech.stop(); // Arrêter la lecture audio
+  const handleRestart = async () => {
+    await saveCurrentSessionStats();
+    Speech.stop();
     setIsGameOver(false);
     setIsChapterComplete(false);
     setScore(0);
@@ -1631,8 +1686,9 @@ export default function App() {
     setCurrentBilanIndex(0);
   };
 
-  const handleReturnToMenu = () => {
-    Speech.stop(); // Arrêter la lecture audio
+  const handleReturnToMenu = async () => {
+    await saveCurrentSessionStats();
+    Speech.stop();
     setIsGameOver(false);
     setIsChapterComplete(false);
     setScore(0);
@@ -1643,7 +1699,13 @@ export default function App() {
     setShowBilan(false);
     setCurrentBilanIndex(0);
   };
-
+// Ajoute la fonction handleShowSuivi
+const handleShowSuivi = async () => {
+  setShowSuivi(true); // ERREUR: setShowSuivi n'existe pas ici
+  if (!userName) return; // ERREUR: userName n'existe pas ici
+  const stats = await loadUserStats(userName); // ERREUR: loadUserStats n'existe pas ici
+  setUserStats(stats); // ERREUR: setUserStats n'existe pas ici
+};
   // --- AFFICHAGE (RENDER) ---
 
   useEffect(() => {
@@ -1809,6 +1871,42 @@ export default function App() {
     }
   }, [showSplash, selectedChapter]);
 
+  // Charger la liste des utilisateurs et l'utilisateur courant au lancement
+  useEffect(() => {
+    AsyncStorage.getItem('USERS_LIST').then(list => {
+      setUserList(list ? JSON.parse(list) : []);
+    });
+    AsyncStorage.getItem('CURRENT_USER').then(name => {
+      if (name) setUserName(name);
+    });
+  }, []);
+
+  // Fonction pour sélectionner un utilisateur
+  const handleSelectUser = async (name) => {
+    await AsyncStorage.setItem('CURRENT_USER', name);
+    setUserName(name);
+  };
+
+  // Fonction pour ajouter un utilisateur
+  const handleAddUser = async (name) => {
+    const newList = [...userList, name];
+    await AsyncStorage.setItem('USERS_LIST', JSON.stringify(newList));
+    await AsyncStorage.setItem('CURRENT_USER', name);
+    setUserList(newList);
+    setUserName(name);
+  };
+
+  // Fonction pour changer d'utilisateur
+  const handleChangeUser = async () => {
+    await AsyncStorage.removeItem('CURRENT_USER');
+    setUserName(null);
+  };
+
+  // Affichage de l'écran de sélection/ajout d'utilisateur si pas d'utilisateur courant
+  if (!userName) {
+    return <UserSelectScreen users={userList} onSelectUser={handleSelectUser} onAddUser={handleAddUser} />;
+  }
+
   if (showSplash) {
     const spin = rotateAnim.interpolate({
       inputRange: [0, 1],
@@ -1951,9 +2049,14 @@ export default function App() {
         <Text style={styles.finalScoreTextSmall}>Score : {score} / {maxScore}</Text>
         <Text style={styles.finalScoreTextSmall}>Note finale : {finalGrade} / 20</Text>
         
-        <TouchableOpacity style={styles.bilanButton} onPress={() => { setShowBilan(true); setCurrentBilanIndex(0); }}>
-          <Text style={styles.bilanButtonText}>📊 Voir le bilan des erreurs</Text>
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 16 }}>
+          <TouchableOpacity style={styles.bilanButton} onPress={() => { setShowBilan(true); setCurrentBilanIndex(0); }}>
+            <Text style={styles.bilanButtonText}>📊 Voir le bilan des erreurs</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.suiviButton} onPress={handleShowSuivi}>
+            <Text style={styles.suiviButtonText}>Suivi personnalisé</Text>
+          </TouchableOpacity>
+        </View>
 
         {missedQuestions.length === 0 && (
           <TouchableOpacity style={styles.restartButton} onPress={handleRestart}>
@@ -2044,9 +2147,14 @@ export default function App() {
         <Text style={styles.finalScoreTextSmall}>Score : {score} / {maxScore}</Text>
         <Text style={styles.finalScoreTextSmall}>Note finale : {finalGrade} / 20</Text>
         
-        <TouchableOpacity style={styles.bilanButton} onPress={() => { setShowBilan(true); setCurrentBilanIndex(0); }}>
-          <Text style={styles.bilanButtonText}>📊 Voir le bilan des erreurs</Text>
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 16 }}>
+          <TouchableOpacity style={styles.bilanButton} onPress={() => { setShowBilan(true); setCurrentBilanIndex(0); }}>
+            <Text style={styles.bilanButtonText}>📊 Voir le bilan des erreurs</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.suiviButton} onPress={handleShowSuivi}>
+            <Text style={styles.suiviButtonText}>Suivi personnalisé</Text>
+          </TouchableOpacity>
+        </View>
 
         {missedQuestions.length === 0 && (
           <TouchableOpacity style={styles.restartButton} onPress={handleReturnToMenu}>
@@ -2065,22 +2173,32 @@ export default function App() {
 
     return (
       <View style={styles.menuContainer}>
-        <Animated.Text 
-          style={[
-            styles.menuTitle, 
-            { 
-              opacity: menuTitleFadeAnim,
-              transform: [
-                { translateX: menuTitleSlideAnim },
-                { scale: menuTitleScaleAnim },
-                { scale: menuTitlePulseAnim },
-                { rotate: menuTitleSpin }
-              ] 
-            }
-          ]}
-        >
-          Choisis un chapitre
-        </Animated.Text>
+        <View style={styles.menuHeaderRow}>
+          <TouchableOpacity style={styles.changeUserButtonAbsolute} onPress={handleChangeUser}>
+            <Text style={styles.changeUserButtonText}>Changer d'utilisateur</Text>
+          </TouchableOpacity>
+          <View style={styles.menuTitleAbsoluteCenter}>
+            <Animated.Text 
+              style={[
+                styles.menuTitle, 
+                { 
+                  opacity: menuTitleFadeAnim,
+                  transform: [
+                    { translateX: menuTitleSlideAnim },
+                    { scale: menuTitleScaleAnim },
+                    { scale: menuTitlePulseAnim },
+                    { rotate: menuTitleSpin }
+                  ] 
+                }
+              ]}
+            >
+              Choisis un chapitre
+            </Animated.Text>
+          </View>
+          <TouchableOpacity style={styles.suiviButton} onPress={handleShowSuivi}>
+            <Text style={styles.suiviButtonText}>Suivi personnalisé</Text>
+          </TouchableOpacity>
+        </View>
         <FlatList
           data={chapterNames}
           renderItem={({ item }) => (
@@ -2090,8 +2208,16 @@ export default function App() {
           )}
           keyExtractor={(item) => item}
         />
+        <Text style={{ marginTop: 12, color: '#333', fontStyle: 'italic' }}>
+          Utilisateur : <Text style={{ fontWeight: 'bold', color: '#333' }}>{userName}</Text>
+        </Text>
       </View>
     );
+  }
+
+  // Affichage de l'écran de suivi personnalisé (doit être AVANT tout autre return)
+  if (showSuivi) {
+    return <SuiviScreen stats={userStats} onBack={() => setShowSuivi(false)} />;
   }
 
   return (
@@ -2540,4 +2666,67 @@ const styles = StyleSheet.create({
     fontSize: 16, 
     fontWeight: 'bold',
   },
+  changeUserButtonAbsolute: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    backgroundColor: '#e53935',
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderRadius: 6,
+    zIndex: 2,
+  },
+  changeUserButtonText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: 'bold',
+  },
+  menuHeaderRow: {
+    width: '100%',
+    height: 56, // augmenté pour plus de place
+    marginBottom: 10,
+    marginTop: 10,
+    position: 'relative',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+  },
+  menuTitleAbsoluteCenter: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10, // plus élevé que le bouton
+    pointerEvents: 'none', // pour que le bouton reste cliquable
+  },
+  menuTitle: {
+    color: '#222',
+    fontWeight: 'bold',
+    fontSize: 26,
+    textAlign: 'center',
+  },
+  suiviButton: {
+    backgroundColor: '#fff',
+    borderColor: '#1976d2',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    marginLeft: 'auto',
+    marginRight: 0,
+    marginTop: 2,
+    marginBottom: 2,
+    alignSelf: 'flex-end',
+    elevation: 2,
+  },
+  suiviButtonText: {
+    color: '#1976d2',
+    fontWeight: 'bold',
+    fontSize: 13,
+  },
 });
+
+
+
