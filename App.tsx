@@ -805,9 +805,9 @@ const questionsLibrary = {
       },
       {
         question: "\\begin{array}{c} \\text{Quelle méthode utilise-t-on pour la médiane} \\\\ \\text{si l'effectif total est pair ?} \\end{array}",
-        texteOral: "Quelle méthode utilise-t-on pour la médiane si l'effectif total est pair ?",
-        correct: "\\begin{array}{c} \\text{La moyenne des deux valeurs} \\\\ \\text{centrales de la série ordonnée} \\end{array}",
-        wrongs: ["\\begin{array}{c} \\text{On choisit la valeur} \\\\ \\text{la plus fréquente} \\end{array}", "\\begin{array}{c} \\text{On prend la dernière valeur} \\\\ \\text{de la série} \\end{array}", "\\begin{array}{c} \\text{On ignore les deux} \\\\ \\text{valeurs centrales} \\end{array}"]
+        texteOral: "Comment détermine-t-on la médiane si l'effectif total est pair ?",
+        correct: "\\begin{array}{c} \\text{On prend la moyenne des deux valeurs centrales} \\end{array}",
+        wrongs: ["\\begin{array}{c} \\text{On choisit la valeur centrale} \\end{array}", "\\begin{array}{c} \\text{On utilise la plus grande valeur} \\end{array}", "\\begin{array}{c} \\text{On utilise la plus petite valeur} \\end{array}"]
       },
       {
         question: "\\text{Quelle est la formule correcte de la moyenne d'une série statistique ?}",
@@ -1059,6 +1059,8 @@ export default function App() {
   const [isChapterComplete, setIsChapterComplete] = useState(false);
   const [showBilan, setShowBilan] = useState(false);
   const [currentBilanIndex, setCurrentBilanIndex] = useState(0);
+  const [showStats, setShowStats] = useState(false);
+  const [userStats, setUserStats] = useState([]); // Pour stocker les données chargées
   
   const prevDirection = useRef('idle');
   const animationIntervalRef = useRef(null);
@@ -1362,7 +1364,7 @@ export default function App() {
   }, [isRoundActive]);
 
   useEffect(() => {
-    if (!isRoundActive) return;
+    if (isGameOver || showBilan) return; // Stoppe le jeu si game over ou bilan
     const gameLoop = setInterval(() => {
       const playerCurrentX = playerX;
       const playerCurrentY = playerY._value;
@@ -1394,9 +1396,12 @@ export default function App() {
       });
     }, 16);
     return () => clearInterval(gameLoop);
-  }, [playerX, playerY, answerBlocks, isRoundActive, projectiles]);
+  }, [playerX, playerY, answerBlocks, isRoundActive, projectiles, isGameOver, showBilan]);
 
   useEffect(() => {
+    if (isGameOver || isChapterComplete) {
+      return;
+    }
     const interval = setInterval(() => {
       if (moveDirection === 'left') {
         setPlayerX(x => Math.max(x - 10, 0));
@@ -1405,23 +1410,17 @@ export default function App() {
       }
     }, 16);
     return () => clearInterval(interval);
-  }, [moveDirection, screen.width]);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setSkyOffset(offset => {
-        let next = offset - 1;
-        if (next <= -screen.width) next = 0;
-        return next;
-      });
-    }, 30);
-    return () => clearInterval(interval);
-  }, [screen.width]);
+  }, [moveDirection, screen.width, isGameOver, isChapterComplete]);
 
   useEffect(() => {
     if (animationIntervalRef.current) {
       clearInterval(animationIntervalRef.current);
       animationIntervalRef.current = null;
+    }
+    if (isGameOver || isChapterComplete) {
+      setFrameIndex(IDLE_FRAME_INDEX);
+      runSound.current?.stopAsync();
+      return;
     }
     if (moveDirection !== prevDirection.current) {
       if (moveDirection === 'right') setFrameIndex(RUN_RIGHT_START_INDEX);
@@ -1441,7 +1440,7 @@ export default function App() {
       }, ANIMATION_SPEED);
     }
     return () => { if (animationIntervalRef.current) clearInterval(animationIntervalRef.current); };
-  }, [moveDirection]);
+  }, [moveDirection, isGameOver, isChapterComplete]);
 
   useEffect(() => {
     const loadSounds = async () => {
@@ -1473,13 +1472,17 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (isGameOver || isChapterComplete) {
+      runSound.current?.stopAsync();
+      return;
+    }
     if (moveDirection === 'left' || moveDirection === 'right') {
       runSound.current?.setIsLoopingAsync(true);
       runSound.current?.replayAsync();
     } else {
       runSound.current?.stopAsync();
     }
-  }, [moveDirection]);
+  }, [moveDirection, isGameOver, isChapterComplete]);
 
   // --- HOOKS D'EFFET ---
 
@@ -1981,10 +1984,18 @@ export default function App() {
           </TouchableOpacity>
           
           {currentBilanIndex === missedQuestions.length - 1 && (
-            <TouchableOpacity style={styles.restartButton} onPress={handleReturnToMenu}>
-              <Text style={styles.restartButtonText}>Retour au menu</Text>
+            <TouchableOpacity style={styles.bilanButton} onPress={handleShowStats}>
+              <Text style={styles.bilanButtonText}>📈 Voir mes statistiques</Text>
             </TouchableOpacity>
           )}
+
+          <TouchableOpacity style={styles.bilanButton} onPress={() => { setShowBilan(true); setCurrentBilanIndex(0); }}>
+            <Text style={styles.bilanButtonText}>📊 Voir le bilan des erreurs</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.bilanButton} onPress={handleShowStats}>
+            <Text style={styles.bilanButtonText}>📈 Historique personnel</Text>
+          </TouchableOpacity>
         </View>
       );
     }
@@ -1997,6 +2008,9 @@ export default function App() {
         
         <TouchableOpacity style={styles.bilanButton} onPress={() => { setShowBilan(true); setCurrentBilanIndex(0); }}>
           <Text style={styles.bilanButtonText}>📊 Voir le bilan des erreurs</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.bilanButton} onPress={handleShowStats}>
+          <Text style={styles.bilanButtonText}>📈 Historique personnel</Text>
         </TouchableOpacity>
 
         {missedQuestions.length === 0 && (
@@ -2078,6 +2092,14 @@ export default function App() {
               <Text style={styles.restartButtonText}>Retour au menu</Text>
             </TouchableOpacity>
           )}
+
+          <TouchableOpacity style={styles.bilanButton} onPress={() => { setShowBilan(true); setCurrentBilanIndex(0); }}>
+            <Text style={styles.bilanButtonText}>📊 Voir le bilan des erreurs</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.bilanButton} onPress={handleShowStats}>
+            <Text style={styles.bilanButtonText}>📈 Historique personnel</Text>
+          </TouchableOpacity>
         </View>
       );
     }
@@ -2090,6 +2112,9 @@ export default function App() {
         
         <TouchableOpacity style={styles.bilanButton} onPress={() => { setShowBilan(true); setCurrentBilanIndex(0); }}>
           <Text style={styles.bilanButtonText}>📊 Voir le bilan des erreurs</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.bilanButton} onPress={handleShowStats}>
+          <Text style={styles.bilanButtonText}>📈 Historique personnel</Text>
         </TouchableOpacity>
 
         {missedQuestions.length === 0 && (
@@ -2145,6 +2170,32 @@ export default function App() {
           Utilisateur : <Text style={{ fontWeight: 'bold', color: '#333' }}>{userName}</Text>
         </Text>
       </View>
+    );
+  }
+
+  if (showStats) {
+    return (
+      <ScrollView style={{ flex: 1, backgroundColor: '#f7f9fc', padding: 16 }}>
+        <Text style={styles.suiviStatsTitle}>Résumé de la session</Text>
+        <Text style={styles.suiviStatsText}>Score : {score} / {currentQuestions.length * 10}</Text>
+        <Text style={styles.suiviStatsText}>Erreurs : {missedQuestions.length}</Text>
+        <Text style={styles.suiviStatsText}>Précision : {currentQuestions.length > 0 ? ((score / (currentQuestions.length * 10)) * 100).toFixed(1) : 0}%</Text>
+        <View style={{ height: 24 }} />
+        <Text style={styles.suiviStatsTitle}>Historique global</Text>
+        {history.length === 0 && <Text style={styles.suiviStatsText}>Aucune session enregistrée.</Text>}
+        {history.slice().reverse().map((item, idx) => (
+          <View key={idx} style={{ marginBottom: 8, backgroundColor: '#e3f2fd', borderRadius: 8, padding: 8 }}>
+            <Text>Chapitre : {item.chapter}</Text>
+            <Text>Score : {item.score} / {item.maxScore}</Text>
+            <Text>Précision : {item.precision}%</Text>
+            <Text>Erreurs : {item.errors}</Text>
+            <Text>Date : {new Date(item.date).toLocaleString()}</Text>
+          </View>
+        ))}
+        <TouchableOpacity style={styles.restartButton} onPress={() => { setShowStats(false); handleReturnToMenu(); }}>
+          <Text style={styles.restartButtonText}>Retour au menu</Text>
+        </TouchableOpacity>
+      </ScrollView>
     );
   }
 
@@ -2635,7 +2686,70 @@ const styles = StyleSheet.create({
     fontSize: 26,
     textAlign: 'center',
   },
+  suiviStatsContainer: {
+    backgroundColor: '#f0f8ff',
+    padding: 16,
+    borderRadius: 10,
+    marginVertical: 20,
+    alignItems: 'center',
+  },
+  suiviStatsTitle: {
+    fontWeight: 'bold',
+    fontSize: 17,
+    color: '#1976d2',
+    marginBottom: 8,
+  },
+  suiviStatsText: {
+    fontSize: 15,
+    color: '#333',
+    marginBottom: 2,
+  },
 });
 
+const saveGameSession = async () => {
+  if (!userName || !selectedChapter || currentQuestions.length === 0) return;
+  const sessionData = {
+    date: new Date().toISOString(),
+    chapter: selectedChapter,
+    score: score,
+    totalQuestions: currentQuestions.length,
+    grade: (score / (currentQuestions.length * 10)) * 20,
+    missedQuestions: missedQuestions.map(q => ({
+      question: q.question,
+      chapter: selectedChapter
+    }))
+  };
+  try {
+    const existingData = await AsyncStorage.getItem('GAME_SESSIONS');
+    const allSessions = existingData ? JSON.parse(existingData) : {};
+    if (!allSessions[userName]) {
+      allSessions[userName] = [];
+    }
+    allSessions[userName].push(sessionData);
+    await AsyncStorage.setItem('GAME_SESSIONS', JSON.stringify(allSessions));
+  } catch (error) {
+    console.error('Échec de la sauvegarde de la session:', error);
+  }
+};
+
+// Fonction pour afficher l'historique/statistiques personnelles
+const handleShowStats = async () => {
+  try {
+    const data = await AsyncStorage.getItem('GAME_SESSIONS');
+    if (data) {
+      const allSessions = JSON.parse(data);
+      if (allSessions[userName]) {
+        setUserStats(allSessions[userName]);
+      } else {
+        setUserStats([]);
+      }
+    } else {
+      setUserStats([]);
+    }
+  } catch (error) {
+    setUserStats([]);
+  }
+  setShowStats(true);
+};
 
 
