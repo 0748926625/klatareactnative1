@@ -14,7 +14,6 @@ import splashImage from './assets/splash.jpg';
 import fireballImage from './assets/images/fireball.png';
 import { Audio } from 'expo-av';
 import MathRenderer from './MathRenderer';
-import SuiviScreen from './components/SuiviScreen';
 
 // Import des images pour les questions
 const questionImages = {
@@ -175,7 +174,7 @@ const questionsLibrary = {
         imgKey: "thales_fig4"
       },
       {
-        question: "\\begin{array}{c} \\text{Si } (AB) // (CD), \\text{ quelle égalité de quotients} \\\\ \\text{exprime la propriété de Thalès ?} \\end.array}",
+        question: "\\begin{array}{c} \\text{Si } (AB) // (CD), \\text{ quelle égalité de quotients} \\\\ \\text{exprime la propriété de Thalès ?} \\end{array}",
         texteOral: "Dans la figure ci-contre, on a la droite A B parallèle à la droite C D. Quelle égalité de quotients exprime la propriété de Thalès ?",
         correct: "\\frac{OA}{OD} = \\frac{OB}{OC}",
         wrongs: ["\\frac{OD}{OA} = \\frac{OC}{OB}", "\\frac{OA}{OB} = \\frac{OD}{OC}", "OA \\cdot OC = OD \\cdot OB"],
@@ -1060,8 +1059,6 @@ export default function App() {
   const [isChapterComplete, setIsChapterComplete] = useState(false);
   const [showBilan, setShowBilan] = useState(false);
   const [currentBilanIndex, setCurrentBilanIndex] = useState(0);
-  const [showSuivi, setShowSuivi] = useState(false);
-  const [userStats, setUserStats] = useState(null);
   
   const prevDirection = useRef('idle');
   const animationIntervalRef = useRef(null);
@@ -1095,49 +1092,6 @@ export default function App() {
 
   const [userName, setUserName] = useState(null);
   const [userList, setUserList] = useState([]);
-
-  // --- UTILS STATS ---
-  const getStatsKey = (user) => `USER_STATS_${user}`;
-
-  // Charger les stats de l'utilisateur courant
-  const loadUserStats = async (user) => {
-    if (!user) return { scores: [], erreurs: [] };
-    const raw = await AsyncStorage.getItem(getStatsKey(user));
-    return raw ? JSON.parse(raw) : { scores: [], erreurs: [] };
-  };
-
-  // Sauvegarder les stats de l'utilisateur courant
-  const saveUserStats = async (user, stats) => {
-    if (!user) return;
-    await AsyncStorage.setItem(getStatsKey(user), JSON.stringify(stats));
-  };
-
-  // Appeler ceci à la fin de partie/chapitre
-  const saveCurrentSessionStats = async () => {
-    if (!userName) return;
-    const stats = await loadUserStats(userName);
-    // Ajout du score de la session
-    const maxScore = currentQuestions.length * 10;
-    const noteSur20 = maxScore > 0 ? (score / maxScore) * 20 : 0;
-    const sessionScore = {
-      date: new Date().toISOString(),
-      score,
-      noteSur20,
-      nbQuestions: currentQuestions.length,
-      temps: 0, // à brancher si tu as le temps passé
-      chapitre: selectedChapter || 'Tous les chapitres',
-    };
-    stats.scores.push(sessionScore);
-    // Ajout des erreurs de la session
-    missedQuestions.forEach(q => {
-      stats.erreurs.push({
-        question: q.question,
-        date: new Date().toISOString(),
-        chapitre: selectedChapter || 'Tous les chapitres',
-      });
-    });
-    await saveUserStats(userName, stats);
-  };
 
   // --- HOOKS D'EFFET ---
 
@@ -1672,9 +1626,8 @@ export default function App() {
     })
   ).current;
 
-  const handleRestart = async () => {
-    await saveCurrentSessionStats();
-    Speech.stop();
+  const handleRestart = () => {
+    Speech.stop(); // Arrêter la lecture audio
     setIsGameOver(false);
     setIsChapterComplete(false);
     setScore(0);
@@ -1686,9 +1639,8 @@ export default function App() {
     setCurrentBilanIndex(0);
   };
 
-  const handleReturnToMenu = async () => {
-    await saveCurrentSessionStats();
-    Speech.stop();
+  const handleReturnToMenu = () => {
+    Speech.stop(); // Arrêter la lecture audio
     setIsGameOver(false);
     setIsChapterComplete(false);
     setScore(0);
@@ -1699,13 +1651,7 @@ export default function App() {
     setShowBilan(false);
     setCurrentBilanIndex(0);
   };
-// Ajoute la fonction handleShowSuivi
-const handleShowSuivi = async () => {
-  setShowSuivi(true); // ERREUR: setShowSuivi n'existe pas ici
-  if (!userName) return; // ERREUR: userName n'existe pas ici
-  const stats = await loadUserStats(userName); // ERREUR: loadUserStats n'existe pas ici
-  setUserStats(stats); // ERREUR: setUserStats n'existe pas ici
-};
+
   // --- AFFICHAGE (RENDER) ---
 
   useEffect(() => {
@@ -2049,14 +1995,9 @@ const handleShowSuivi = async () => {
         <Text style={styles.finalScoreTextSmall}>Score : {score} / {maxScore}</Text>
         <Text style={styles.finalScoreTextSmall}>Note finale : {finalGrade} / 20</Text>
         
-        <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 16 }}>
-          <TouchableOpacity style={styles.bilanButton} onPress={() => { setShowBilan(true); setCurrentBilanIndex(0); }}>
-            <Text style={styles.bilanButtonText}>📊 Voir le bilan des erreurs</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.suiviButton} onPress={handleShowSuivi}>
-            <Text style={styles.suiviButtonText}>Suivi personnalisé</Text>
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity style={styles.bilanButton} onPress={() => { setShowBilan(true); setCurrentBilanIndex(0); }}>
+          <Text style={styles.bilanButtonText}>📊 Voir le bilan des erreurs</Text>
+        </TouchableOpacity>
 
         {missedQuestions.length === 0 && (
           <TouchableOpacity style={styles.restartButton} onPress={handleRestart}>
@@ -2147,14 +2088,9 @@ const handleShowSuivi = async () => {
         <Text style={styles.finalScoreTextSmall}>Score : {score} / {maxScore}</Text>
         <Text style={styles.finalScoreTextSmall}>Note finale : {finalGrade} / 20</Text>
         
-        <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 16 }}>
-          <TouchableOpacity style={styles.bilanButton} onPress={() => { setShowBilan(true); setCurrentBilanIndex(0); }}>
-            <Text style={styles.bilanButtonText}>📊 Voir le bilan des erreurs</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.suiviButton} onPress={handleShowSuivi}>
-            <Text style={styles.suiviButtonText}>Suivi personnalisé</Text>
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity style={styles.bilanButton} onPress={() => { setShowBilan(true); setCurrentBilanIndex(0); }}>
+          <Text style={styles.bilanButtonText}>📊 Voir le bilan des erreurs</Text>
+        </TouchableOpacity>
 
         {missedQuestions.length === 0 && (
           <TouchableOpacity style={styles.restartButton} onPress={handleReturnToMenu}>
@@ -2195,9 +2131,6 @@ const handleShowSuivi = async () => {
               Choisis un chapitre
             </Animated.Text>
           </View>
-          <TouchableOpacity style={styles.suiviButton} onPress={handleShowSuivi}>
-            <Text style={styles.suiviButtonText}>Suivi personnalisé</Text>
-          </TouchableOpacity>
         </View>
         <FlatList
           data={chapterNames}
@@ -2213,11 +2146,6 @@ const handleShowSuivi = async () => {
         </Text>
       </View>
     );
-  }
-
-  // Affichage de l'écran de suivi personnalisé (doit être AVANT tout autre return)
-  if (showSuivi) {
-    return <SuiviScreen stats={userStats} onBack={() => setShowSuivi(false)} />;
   }
 
   return (
@@ -2707,26 +2635,4 @@ const styles = StyleSheet.create({
     fontSize: 26,
     textAlign: 'center',
   },
-  suiviButton: {
-    backgroundColor: '#fff',
-    borderColor: '#1976d2',
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    marginLeft: 'auto',
-    marginRight: 0,
-    marginTop: 2,
-    marginBottom: 2,
-    alignSelf: 'flex-end',
-    elevation: 2,
-  },
-  suiviButtonText: {
-    color: '#1976d2',
-    fontWeight: 'bold',
-    fontSize: 13,
-  },
 });
-
-
-
