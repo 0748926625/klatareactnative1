@@ -164,9 +164,10 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   connected: {
-    fontSize: 20,
-    color: 'green',
-    marginBottom: 18,
+    fontSize: 22,
+    color: '#2c3e50',
+    marginBottom: 30,
     fontWeight: 'bold',
+    textAlign: 'center',
   },
 });

@@ -1,21 +1,34 @@
-import React, { useRef, useState, useEffect } from 'react';
-import LoginScreen from './components/LoginScreen';
-import UserNameScreen from './components/UserNameScreen';
-import UserSelectScreen from './components/UserSelectScreen';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+// App.js - VERSION FINALE ET CORRIGÉE
 
-import { StyleSheet, View, Text, Animated, PanResponder, Dimensions, TouchableOpacity, ImageBackground, Image, Easing, FlatList, ScrollView } from 'react-native';
+import React, { useRef, useState, useEffect } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { LogBox } from 'react-native';
+LogBox.ignoreLogs(['Warning: useInsertionEffect must not schedule updates']); // Ignore RN Animated warning
+
+import { checkTrialStatus, getSavedLicenseKey } from './utils/licensing';
+import LicenseScreen from './components/LicenseScreen';
+
+import {
+  StyleSheet, View, Text, Animated, PanResponder, Dimensions,
+  TouchableOpacity, ImageBackground, Image, Easing, FlatList,
+  ScrollView, TextInput, ActivityIndicator
+} from 'react-native';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import * as Speech from 'expo-speech';
+import { Audio } from 'expo-av';
+import MathRenderer from './MathRenderer';
+import { LineChart } from 'react-native-chart-kit';
+import { Picker } from '@react-native-picker/picker';
+import * as SecureStore from 'expo-secure-store';
+
+// --- ASSETS & IMAGES ---
 import bgsta from './assets/backgrounds/bgsta.png';
 import sky1 from './assets/backgrounds/sky1.png';
 import zadiSprite from './assets/sprites/zadi.png';
 import splashImage from './assets/splash.jpg';
 import fireballImage from './assets/images/fireball.png';
-import { Audio } from 'expo-av';
-import MathRenderer from './MathRenderer';
 
-// Import des images pour les questions
+// --- DONNÉES DE L'APPLICATION ---
 const questionImages = {
   thales_fig3: require('./assets/images/thales_fig3.png'),
   thales_fig4: require('./assets/images/thales_fig4.png'),
@@ -27,7 +40,13 @@ const questionImages = {
   angle_1: require('./assets/images/angle_1.png'),
 };
 
-// Votre bibliothèque de questions complète
+// ==================================================================
+// =================== VOTRE TÂCHE EST ICI ==========================
+// ==================================================================
+//
+// Collez l'intégralité de votre objet `questionsLibrary` ici.
+// J'ai laissé la structure avec quelques exemples pour vous guider.
+//
 const questionsLibrary = {
   maths: {
     "CALCUL LITTERAL": [
@@ -942,133 +961,254 @@ const questionsLibrary = {
     ]
   }
 };
+// ==================================================================
+// ===================== FIN DE VOTRE TÂCHE =========================
+// ==================================================================
 
-const PLAYER_RADIUS = 30;
-const RECT_WIDTH = 210;
-const RECT_HEIGHT = 65;
-const JUMP_DURATION = 350;
-const GROUND_HEIGHT = 40;
-const FRAME_WIDTH = 64;
-const FRAME_HEIGHT = 64;
-const TOTAL_SPRITE_FRAMES = 13;
-const IDLE_FRAME_INDEX = 0;
-const RUN_RIGHT_START_INDEX = 1;
-const RUN_RIGHT_FRAME_COUNT = 6;
-const RUN_LEFT_START_INDEX = 7;
-const RUN_LEFT_FRAME_COUNT = 6;
-const ANIMATION_SPEED = 80;
-const BLOCK_SPEED = 40;
 
-const shuffleArray = (array) => {
-  const shuffled = [...array];
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-  }
-  return shuffled;
+// --- CONSTANTES DU JEU ---
+const PLAYER_RADIUS = 30, RECT_WIDTH = 210, RECT_HEIGHT = 65, JUMP_DURATION = 350, GROUND_HEIGHT = 40, FRAME_WIDTH = 64, FRAME_HEIGHT = 64, TOTAL_SPRITE_FRAMES = 13, IDLE_FRAME_INDEX = 0, RUN_RIGHT_START_INDEX = 1, RUN_RIGHT_FRAME_COUNT = 6, RUN_LEFT_START_INDEX = 7, RUN_LEFT_FRAME_COUNT = 6, ANIMATION_SPEED = 80, BLOCK_SPEED = 40;
+
+// --- FONCTIONS UTILITAIRES ---
+const getUserDataKey = (userName) => `USER_DATA_${userName.toUpperCase()}`;
+const getDefaultUserData = (userName) => ({ userName, stats: { totalGames: 0, totalScore: 0, bestScores: {} }, history: [] });
+const getUserData = async (userName) => {
+  if (!userName) return null;
+  try { const data = await AsyncStorage.getItem(getUserDataKey(userName)); return data ? JSON.parse(data) : getDefaultUserData(userName); } catch (e) { console.error("Erreur de récupération des données utilisateur:", e); return getDefaultUserData(userName); }
+};
+const saveGameResult = async (userName, result) => {
+  if (!userName || !result) return;
+  try { const userData = await getUserData(userName); userData.history.unshift({ ...result, id: ''+Date.now() }); userData.stats.totalGames++; userData.stats.totalScore += result.grade; const best = userData.stats.bestScores[result.chapter] || 0; if (result.grade > best) { userData.stats.bestScores[result.chapter] = result.grade; } await AsyncStorage.setItem(getUserDataKey(userName), JSON.stringify(userData)); } catch (e) { console.error("Erreur de sauvegarde du résultat:", e); }
+};
+const shuffleArray = (a) => { let newArray = [...a]; for (let i = newArray.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [newArray[i], newArray[j]] = [newArray[j], newArray[i]]; } return newArray; };
+const getFontSizeForQuestion = (q = '') => q.length > 100 ? 20 : (q.length > 60 ? 24 : 32);
+const getFontSizeForAnswer = (a = '') => a.length > 100 ? 10 : (a.length > 80 ? 12 : (a.length > 50 ? 14 : (a.length > 30 ? 16 : (a.length > 15 ? 18 : 20))));
+const getFontSizeForTableCell = (text = '') => {
+  if (text.length > 80) return 10; // Augmenté de 8 à 10
+  if (text.length > 50) return 12; // Augmenté de 10 à 12
+  return 14; // Augmenté de 12 à 14
 };
 
-const formatQuestionWithLineBreaks = (questionText) => {
-  if (questionText.length <= 45) {
-    return questionText;
+
+// --- COMPOSANTS D'INTERFACE CENTRALISÉS ---
+const UserSelectScreen = ({ users, onSelectUser, onAddUser }) => {
+    const [newUserName, setNewUserName] = useState(''); const [isAdding, setIsAdding] = useState(false); const handleAdd = () => { if (newUserName.trim()) { onAddUser(newUserName.trim()); } };
+    if (isAdding || users.length === 0) { return (<View style={styles.userSelectContainer}><Text style={styles.menuTitle}>Créer un joueur</Text><TextInput style={styles.userInput} placeholder="Entrez votre nom" value={newUserName} onChangeText={setNewUserName} placeholderTextColor="#888" /><TouchableOpacity style={styles.userButton} onPress={handleAdd}><Text style={styles.userButtonText}>Commencer !</Text></TouchableOpacity>{users.length > 0 && <TouchableOpacity onPress={() => setIsAdding(false)}><Text style={styles.switchUserText}>Ou choisir un joueur existant</Text></TouchableOpacity>}</View>); }
+    return (<View style={styles.userSelectContainer}><Text style={styles.menuTitle}>Choisir un joueur</Text><FlatList data={users} keyExtractor={(item) => item} renderItem={({ item }) => <TouchableOpacity style={styles.userButton} onPress={() => onSelectUser(item)}><Text style={styles.userButtonText}>{item}</Text></TouchableOpacity>} /><TouchableOpacity onPress={() => setIsAdding(true)}><Text style={styles.switchUserText}>+ Ajouter un nouveau joueur</Text></TouchableOpacity></View>);
+};
+// ... (gardez tous les imports et le reste du code App.js)
+
+// --- COMPOSANTS D'INTERFACE CENTRALISÉS ---
+// ... (gardez le composant UserSelectScreen)
+
+const ProfileScreen = ({ userName, onBack }) => {
+  const [userData, setUserData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [selectedChapter, setSelectedChapter] = useState(null);
+  // NOUVEL ÉTAT POUR LES DONNÉES DU TABLEAU
+  const [problematicQuestions, setProblematicQuestions] = useState([]);
+  const [currentProblemIndex, setCurrentProblemIndex] = useState(0);
+
+  useEffect(() => {
+      const loadData = async () => {
+          setLoading(true);
+          const data = await getUserData(userName);
+          setUserData(data);
+          if (data && data.history && data.history.length > 0) {
+              const chapters = [...new Set(data.history.map(item => item.chapter))];
+              if (chapters.length > 0) {
+                  setSelectedChapter(chapters[0]);
+              }
+          }
+          setLoading(false);
+      };
+      loadData();
+  }, [userName]);
+
+  // NOUVEL EFFET POUR CALCULER LES QUESTIONS PROBLÉMATIQUES
+  useEffect(() => {
+      if (!userData || !selectedChapter) {
+          setProblematicQuestions([]);
+          return;
+      }
+
+      // 1. Agréger les échecs par question
+      const failureCounts = new Map();
+      userData.history
+          .filter(game => game.chapter === selectedChapter)
+          .flatMap(game => game.missedQuestions || []) // flatMap pour créer une seule liste d'erreurs
+          .forEach(missedQ => {
+              const key = missedQ.question; // La question LaTeX sert de clé unique
+              if (failureCounts.has(key)) {
+                  failureCounts.get(key).count++;
+              } else {
+                  failureCounts.set(key, {
+                      questionObject: missedQ,
+                      count: 1
+                  });
+              }
+          });
+
+      // 2. Convertir la Map en tableau et trier par nombre d'échecs (décroissant)
+      const sortedData = Array.from(failureCounts.values())
+          .sort((a, b) => b.count - a.count);
+
+      setProblematicQuestions(sortedData);
+      setCurrentProblemIndex(0);
+
+  }, [userData, selectedChapter]); // Se recalcule si les données ou le chapitre changent
+
+  const renderChart = () => {
+      if (!userData || !userData.history || userData.history.length === 0) {
+          return <Text style={styles.profileInfoText}>Aucune donnée de partie pour le moment.</Text>;
+      }
+
+      let chapterData = [];
+      if (selectedChapter === 'Tous les chapitres') {
+          // Si "Tous les chapitres" est sélectionné, on prend toutes les données d'historique
+          chapterData = userData.history
+            .slice(0, 20) // On prend les 20 dernières parties globales
+            .reverse();
+      } else if (selectedChapter) {
+          // Sinon, on filtre par chapitre comme avant
+          chapterData = userData.history
+            .filter(item => item.chapter === selectedChapter)
+            .slice(0, 20) // On prend les 20 dernières parties pour ce chapitre
+            .reverse();
+      }
+
+      if (chapterData.length === 0) {
+          return <Text style={styles.profileInfoText}>Aucune partie trouvée pour ce chapitre ou pour tous les chapitres.</Text>;
+      }
+
+      const chartData = {
+          labels: chapterData.map((item, index) => String(index + 1)),
+          datasets: [{
+              data: chapterData.map(item => item.grade || 0),
+              color: (opacity = 1) => `rgba(255, 215, 0, ${opacity})`,
+              strokeWidth: 5
+          }]
+      };
+      return (
+          <LineChart
+              data={chartData} width={SCREEN_WIDTH - 40} height={220} yAxisLabel="" yAxisSuffix="/20" yAxisInterval={1} chartConfig={chartConfig} bezier style={{ marginVertical: 8, borderRadius: 16 }}
+              getDotColor={(dataPoint) => dataPoint >= 10 ? '#4CAF50' : '#F44336'}
+          />
+      );
+  };
+
+  if (loading) {
+      return <View style={styles.profileContainer}><ActivityIndicator size="large" color="#0000ff" /></View>;
   }
   
-  // Diviser en segments de 45 caractères
-  const segments = [];
-  for (let i = 0; i < questionText.length; i += 45) {
-    segments.push(questionText.slice(i, i + 45));
+  if (!userData) {
+      return <View style={styles.profileContainer}><Text>Impossible de charger les données.</Text></View>;
   }
-  
-  // Formater avec LaTeX array
-  if (segments.length === 2) {
-    return `\\begin{array}{c} ${segments[0]} \\\\ ${segments[1]} \\end{array}`;
-  } else if (segments.length === 3) {
-    return `\\begin{array}{c} ${segments[0]} \\\\ ${segments[1]} \\\\ ${segments[2]} \\end{array}`;
-  } else {
-    // Pour plus de 3 segments, on garde les 3 premiers
-    return `\\begin{array}{c} ${segments[0]} \\\\ ${segments[1]} \\\\ ${segments[2]}... \\end{array}`;
-  }
+
+  const allChapterNames = Object.keys(questionsLibrary.maths || {});
+    const availableChapters = userData && userData.history ? ['Tous les chapitres', ...new Set(userData.history.map(item => item.chapter))] : ['Tous les chapitres'];
+
+  return (
+      <ImageBackground source={bgsta} style={styles.fullScreen}>
+          <ScrollView contentContainerStyle={styles.profileContainer}>
+              <Text style={styles.profileTitle}>Profil de {userName}</Text>
+              
+              <View style={styles.statsContainer}>
+                  <Text style={styles.statsTitle}>Statistiques Globales</Text>
+                  <Text style={styles.profileInfoText}>Parties jouées: {userData.stats.totalGames}</Text>
+                  <Text style={styles.profileInfoText}>Score Total: {userData.stats.totalScore}</Text>
+              </View>
+              
+              <View style={styles.statsContainer}>
+                  <Text style={styles.statsTitle}>Évolution par Chapitre</Text>
+                  {availableChapters.length > 0 ? (
+                      <View style={styles.pickerContainer}>
+                          <Picker selectedValue={selectedChapter} onValueChange={(itemValue) => setSelectedChapter(itemValue)} style={styles.picker}>
+                              {availableChapters.map(chap => <Picker.Item key={chap} label={chap} value={chap} />)}
+                          </Picker>
+                      </View>
+                  ) : (
+                      <Text style={styles.profileInfoText}>Jouez à un chapitre pour voir vos statistiques.</Text>
+                  )}
+                  {renderChart()}
+              </View>
+
+              {/* BLOC REMANIÉ : NAVIGATION SUR UNE QUESTION À LA FOIS */}
+              <View style={styles.statsContainer}>
+                  <Text style={styles.statsTitle}>Questions à revoir</Text>
+                  {problematicQuestions.length > 0 ? (
+                      <>
+                        <Text style={styles.bilanCounterText}>{currentProblemIndex+1}/{problematicQuestions.length}</Text>
+                        <View style={styles.bilanQuestionSection}>
+                          <Text style={styles.bilanQuestionLabel}>Question :</Text>
+                          <View style={styles.bilanQuestionContent}>
+                            <MathRenderer math={problematicQuestions[currentProblemIndex].questionObject.question} fontSize={getFontSizeForTableCell(problematicQuestions[currentProblemIndex].questionObject.question)} color="black" style={{ flexWrap: 'wrap' }} />
+                          </View>
+                        </View>
+                        <View style={styles.bilanAnswerSection}>
+                          <Text style={styles.bilanAnswerLabel}>Réponse correcte :</Text>
+                          <View style={styles.bilanAnswerContent}>
+                            <MathRenderer math={problematicQuestions[currentProblemIndex].questionObject.correct} fontSize={getFontSizeForTableCell(problematicQuestions[currentProblemIndex].questionObject.correct)} color="#4CAF50" style={{ flexWrap: 'wrap' }} />
+                          </View>
+                        </View>
+                        <View style={styles.bilanNavigation}>
+                          <TouchableOpacity onPress={()=>setCurrentProblemIndex(i=>i-1)} disabled={currentProblemIndex===0} style={[styles.bilanNavButton,currentProblemIndex===0&&styles.disabledButton]}>
+                            <Text style={styles.bilanNavButtonText}>Précédent</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity onPress={()=>setCurrentProblemIndex(i=>i+1)} disabled={currentProblemIndex>=problematicQuestions.length-1} style={[styles.bilanNavButton,currentProblemIndex>=problematicQuestions.length-1&&styles.disabledButton]}>
+                            <Text style={styles.bilanNavButtonText}>Suivant</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </>
+                  ) : (
+                      <Text style={styles.profileInfoText}>Aucune erreur répétée pour ce chapitre. Bravo !</Text>
+                  )}
+              </View>
+              
+              <TouchableOpacity style={styles.backButton} onPress={onBack}>
+                  <Text style={styles.backButtonText}>Retour au menu</Text>
+              </TouchableOpacity>
+          </ScrollView>
+      </ImageBackground>
+  );
 };
 
-const getFontSizeForQuestion = (questionText = '') => {
-  const length = questionText.length;
-  if (length > 100) {
-    return 20;
-  }
-  if (length > 60) {
-    return 24;
-  }
-  return 32;
-};
-
-const getFontSizeForAnswer = (answerText = '') => {
-  const length = answerText.length;
-  if (length > 80) {
-    return 12;
-  }
-  if (length > 50) {
-    return 14;
-  }
-  if (length > 30) {
-    return 16;
-  }
-  if (length > 15) {
-    return 18;
-  }
-  return 20;
-};
-
-// --- COMPOSANT D'AFFICHAGE MATHÉMATIQUE OPTIMISÉ ---
-const MathDisplay = ({ math, color, fontSize = 16 }) => {
-  try {
-    return (
-      <MathRenderer 
-        math={math} 
-        color={color} 
-        fontSize={fontSize}
-      />
-    );
-  } catch (error) {
-    return <Text style={{fontSize, color}}>{math}</Text>;
-  }
-};
-
+// --- COMPOSANT PRINCIPAL ---
 export default function App() {
-  const [screen, setScreen] = useState(Dimensions.get('window'));
+  const [currentView, setCurrentView] = useState('splash');
+  const [showSplash, setShowSplash] = useState(true);
+  const [isLicensed, setIsLicensed] = useState(false);
+  const [showLicenseScreen, setShowLicenseScreen] = useState(false);
+  // CORRECTION: Initialisation paresseuse pour éviter l'erreur "screen doesn't exist"
+  const [screen, setScreen] = useState(() => Dimensions.get('window'));
+  const [userName, setUserName] = useState(null);
+  const [userList, setUserList] = useState([]);
   const [selectedChapter, setSelectedChapter] = useState(null);
   const [currentQuestions, setCurrentQuestions] = useState([]);
-  const [showSplash, setShowSplash] = useState(true);
   const chapterNames = Object.keys(questionsLibrary.maths || {});
-
-  const [groundY, setGroundY] = useState(screen.height - GROUND_HEIGHT - PLAYER_RADIUS * 2);
-  const [playerX, setPlayerX] = useState(screen.width / 2 - PLAYER_RADIUS);
+  const [groundY, setGroundY] = useState(() => screen.height - GROUND_HEIGHT - PLAYER_RADIUS * 2);
+  const [playerX, setPlayerX] = useState(() => screen.width / 2 - PLAYER_RADIUS);
   const playerY = useRef(new Animated.Value(screen.height - GROUND_HEIGHT - PLAYER_RADIUS * 2)).current;
   const [score, setScore] = useState(0);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [feedback, setFeedback] = useState('');
   const [answerBlocks, setAnswerBlocks] = useState([]);
   const [projectiles, setProjectiles] = useState([]);
   const [isJumping, setIsJumping] = useState(false);
   const [isRoundActive, setIsRoundActive] = useState(true);
+  const isRoundActiveRef = useRef(isRoundActive);
   const [moveDirection, setMoveDirection] = useState(null);
   const [skyOffset, setSkyOffset] = useState(0);
   const [frameIndex, setFrameIndex] = useState(IDLE_FRAME_INDEX);
   const [lives, setLives] = useState(7);
   const [missedQuestions, setMissedQuestions] = useState([]);
-  const [isGameOver, setIsGameOver] = useState(false);
-  const [isChapterComplete, setIsChapterComplete] = useState(false);
   const [showBilan, setShowBilan] = useState(false);
   const [currentBilanIndex, setCurrentBilanIndex] = useState(0);
-  
-  const prevDirection = useRef('idle');
+  const [floatingTexts, setFloatingTexts] = useState([]); // Pour les messages flottants
   const animationIntervalRef = useRef(null);
-  const jumpSound = useRef(null);
-  const correctSound = useRef(null);
-  const wrongSound = useRef(null);
-  const runSound = useRef(null);
-  const laserSound = useRef(null);
-
-  const jumpTargetY = (screen.height * 0.5) - 120;
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const questionOpacityAnim = useRef(new Animated.Value(0)).current;
+  const questionTimeoutRef = useRef(null); // <-- NOUVELLE LIGNE POUR LE TIMEOUT
+  const jumpSound = useRef(null), correctSound = useRef(null), wrongSound = useRef(null), runSound = useRef(null), laserSound = useRef(null);
 
   // Animations pour le splash screen
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -1080,585 +1220,44 @@ export default function App() {
   const subtitleSlideAnim = useRef(new Animated.Value(-100)).current;
   const levelSlideAnim = useRef(new Animated.Value(100)).current;
   const creditsSlideAnim = useRef(new Animated.Value(80)).current; // Changé de 50 à 80 pour partir plus bas
-  const pulseAnim = useRef(new Animated.Value(1)).current;
   const shimmerAnim = useRef(new Animated.Value(0)).current;
 
-  // Animations pour le menu des chapitres
-  const menuTitleFadeAnim = useRef(new Animated.Value(0)).current;
-  const menuTitleSlideAnim = useRef(new Animated.Value(-50)).current;
-  const menuTitleScaleAnim = useRef(new Animated.Value(0.9)).current;
-  const menuTitlePulseAnim = useRef(new Animated.Value(1)).current;
-  const menuTitleRotateAnim = useRef(new Animated.Value(0)).current;
+  // Gestion d'une éventuelle période d'essai --------------------------------
+  const [onTrial, setOnTrial] = useState(false);
+  const [trialTimeLeft, setTrialTimeLeft] = useState(0); // millisecondes
 
-  const [userName, setUserName] = useState(null);
-  const [userList, setUserList] = useState([]);
-
-  // --- HOOKS D'EFFET ---
-
-  useEffect(() => {
-    // Gestion du splash screen avec animations
-    const initializeSplashAnimations = async () => {
-      // Animation d'apparition générale
-      Animated.sequence([
-        Animated.parallel([
-          Animated.timing(fadeAnim, {
-            toValue: 1,
-            duration: 1000,
-            useNativeDriver: true,
-          }),
-          Animated.timing(slideAnim, {
-            toValue: 0,
-            duration: 1000,
-            useNativeDriver: true,
-          }),
-          Animated.timing(scaleAnim, {
-            toValue: 1,
-            duration: 1000,
-            useNativeDriver: true,
-          }),
-        ]),
-        Animated.delay(500),
-        Animated.parallel([
-          Animated.timing(titleSlideAnim, {
-            toValue: 0,
-            duration: 800,
-            useNativeDriver: true,
-          }),
-          Animated.timing(sloganSlideAnim, {
-            toValue: 0,
-            duration: 800,
-            delay: 200,
-            useNativeDriver: true,
-          }),
-          Animated.timing(subtitleSlideAnim, {
-            toValue: 0,
-            duration: 800,
-            delay: 400,
-            useNativeDriver: true,
-          }),
-          Animated.timing(levelSlideAnim, {
-            toValue: 0,
-            duration: 800,
-            delay: 600,
-            useNativeDriver: true,
-          }),
-          Animated.timing(creditsSlideAnim, {
-            toValue: 0,
-            duration: 800,
-            delay: 1000, // Augmenté de 800 à 1000 pour arriver plus tard
-            useNativeDriver: true,
-          }),
-        ]),
-      ]).start();
-
-      // Animation de rotation continue pour le titre
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(rotateAnim, {
-            toValue: 1,
-            duration: 3000,
-            useNativeDriver: true,
-          }),
-          Animated.timing(rotateAnim, {
-            toValue: 0,
-            duration: 3000,
-            useNativeDriver: true,
-          }),
-        ])
-      ).start();
-
-      // Animation de pulsation pour le titre
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulseAnim, {
-            toValue: 1.1,
-            duration: 2000,
-            useNativeDriver: true,
-          }),
-          Animated.timing(pulseAnim, {
-            toValue: 1,
-            duration: 2000,
-            useNativeDriver: true,
-          }),
-        ])
-      ).start();
-
-      // Animation de brillance pour le titre
-      Animated.loop(
-        Animated.timing(shimmerAnim, {
-          toValue: 1,
-          duration: 3000,
-          useNativeDriver: true,
-        })
-      ).start();
-    };
-
-    initializeSplashAnimations();
-
-    const splashTimer = setTimeout(() => {
-      setShowSplash(false);
-    }, 6000);
-
-    return () => clearTimeout(splashTimer);
-  }, []);
-
-  useEffect(() => {
-    // Verrouillage de l'orientation en mode paysage
-    const lockOrientation = async () => {
-      try {
-        await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
-      } catch (error) {
-        // Erreur silencieuse
-      }
-    };
-    
-    lockOrientation();
-    
-    // Vérification périodique de l'orientation
-    const orientationCheck = setInterval(async () => {
-      try {
-        const currentOrientation = await ScreenOrientation.getOrientationAsync();
-        if (currentOrientation !== ScreenOrientation.Orientation.LANDSCAPE_LEFT && 
-            currentOrientation !== ScreenOrientation.Orientation.LANDSCAPE_RIGHT) {
-          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
-        }
-      } catch (error) {
-        // Erreur silencieuse
-      }
-    }, 2000);
-
-    return () => {
-      clearInterval(orientationCheck);
-    };
-  }, []);
+  // Helper pour formater le temps restant (HH:MM:SS)
+  const formatTime = (ms: number) => {
+    const totalSec = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return `${pad(h)}:${pad(m)}:${pad(s)}`;
+  };
 
   useEffect(() => {
     ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
-    const subscription = Dimensions.addEventListener('change', ({ window }) => {
-      setScreen(window);
-      const newGroundY = window.height - GROUND_HEIGHT - PLAYER_RADIUS * 2;
-      setGroundY(newGroundY);
-      playerY.setValue(newGroundY);
-    });
-    return () => {
-      subscription?.remove();
-      Speech.stop();
-    };
-  }, []);
+    const init = async () => {
+      const storedUser = await AsyncStorage.getItem('CURRENT_USER');
+      const userListStored = await AsyncStorage.getItem('USERS_LIST');
+      if (storedUser) setUserName(storedUser);
+      if (userListStored) setUserList(JSON.parse(userListStored));
 
-  useEffect(() => {
-    if (selectedChapter && questionsLibrary.maths[selectedChapter]) {
-      const chapterData = questionsLibrary.maths[selectedChapter];
-      const formattedQuestions = chapterData.map(q => {
-        const allAnswers = [q.correct, ...(q.wrongs || [])];
-        const shuffled = shuffleArray([...allAnswers]);
-        const correctIndex = shuffled.findIndex(ans => ans === q.correct);
-        return { ...q, answers: shuffled, correctIndex: correctIndex };
-      });
-      setCurrentQuestions(shuffleArray(formattedQuestions));
-      setCurrentQuestionIndex(0);
-      setScore(0);
-    } else {
-      setCurrentQuestions([]);
-    }
-  }, [selectedChapter]);
+      const { trialActive, timeLeft } = await checkTrialStatus();
+      const savedLicense = await getSavedLicenseKey();
 
-  useEffect(() => {
-    if (currentQuestions && currentQuestions[currentQuestionIndex]) {
-      const toRead = currentQuestions[currentQuestionIndex].texteOral || currentQuestions[currentQuestionIndex].question;
-      Speech.speak(toRead, { language: 'fr-FR' });
-    }
-    return () => {
-      Speech.stop();
-    };
-  }, [currentQuestionIndex, currentQuestions]);
-
-  useEffect(() => {
-    if (currentQuestions.length === 0 || !currentQuestions[currentQuestionIndex]) {
-      return;
-    }
-
-    setIsRoundActive(true);
-    setFeedback('');
-
-    const question = currentQuestions[currentQuestionIndex];
-    const shuffledAnswers = shuffleArray(
-      question.answers.map((answer, index) => ({ text: answer, isCorrect: index === question.correctIndex }))
-    );
-
-    const possibleHeights = [screen.height * 0.30, screen.height * 0.34, screen.height * 0.44, screen.height * 0.50];
-    const shuffledLanes = shuffleArray(possibleHeights);
-
-    const newBlocks = shuffledAnswers.map((answerData, index) => {
-      const randomY = shuffledLanes[index % shuffledLanes.length];
-      const startX = screen.width + index * (RECT_WIDTH + 220);
-      const distance = startX + RECT_WIDTH;
-      const duration = (distance / BLOCK_SPEED) * 1000;
-      const horizontalAnimation = new Animated.Value(startX);
-
-      return {
-        id: index,
-        text: answerData.text,
-        isCorrect: answerData.isCorrect,
-        isHit: false,
-        animX: horizontalAnimation,
-        animY: new Animated.Value(randomY),
-        duration: duration,
-      };
-    });
-
-    setAnswerBlocks(newBlocks);
-
-    const onTimeout = () => {
-      if (!isRoundActiveRef.current) return;
-      setIsRoundActive(false);
-      wrongSound.current?.replayAsync();
-      setFeedback("Temps écoulé !");
-      
-      setMissedQuestions(prev => {
-        const newArray = [...prev, currentQuestions[currentQuestionIndex]];
-        return newArray;
-      });
-      setLives(prevLives => {
-        const newLives = prevLives - 1;
-        if (newLives <= 0) {
-          Speech.stop(); // Arrêter la lecture audio quand game over
-          setTimeout(() => setIsGameOver(true), 1500);
-        }
-        return newLives;
-      });
-      
-      setTimeout(() => {
-        if (currentQuestionIndex === currentQuestions.length - 1) {
-          Speech.stop(); // Arrêter la lecture audio quand fin de chapitre
-          setIsChapterComplete(true);
-        } else {
-          setCurrentQuestionIndex(prevIndex => prevIndex + 1);
-        }
-      }, 1500);
-    };
-
-    newBlocks.forEach((block, index) => {
-      Animated.timing(block.animX, {
-        toValue: -RECT_WIDTH,
-        duration: block.duration,
-        useNativeDriver: false,
-        easing: Easing.linear,
-      }).start(({ finished }) => {
-        if (finished && index === newBlocks.length - 1) {
-          onTimeout();
-        }
-      });
-    });
-
-    return () => {
-      newBlocks.forEach(b => b.animX.stopAnimation());
-    };
-  }, [currentQuestionIndex, currentQuestions, screen.width]);
-
-  const isRoundActiveRef = useRef(isRoundActive);
-  useEffect(() => {
-    isRoundActiveRef.current = isRoundActive;
-  }, [isRoundActive]);
-
-  useEffect(() => {
-    if (!isRoundActive) return;
-    const gameLoop = setInterval(() => {
-      const playerCurrentX = playerX;
-      const playerCurrentY = playerY._value;
-      answerBlocks.forEach((block) => {
-        if (block.isHit) return;
-        const rectCurrentX = block.animX._value;
-        const rectCurrentY = block.animY._value;
-        const playerBox = { left: playerCurrentX, right: playerCurrentX + PLAYER_RADIUS * 2, top: playerCurrentY, bottom: playerCurrentY + PLAYER_RADIUS * 2 };
-        const rectBox = { left: rectCurrentX, right: rectCurrentX + RECT_WIDTH, top: rectCurrentY, bottom: rectCurrentY + RECT_HEIGHT };
-        const hasCollision = playerBox.right > rectBox.left && playerBox.left < rectBox.right && playerBox.bottom > rectBox.top && playerBox.top < rectBox.bottom;
-        if (hasCollision) {
-          handleAnswerCollision(block);
-        }
-      });
-      projectiles.forEach((proj) => {
-        const projX = proj.x;
-        const projY = proj.anim._value;
-        answerBlocks.forEach((block) => {
-          if (block.isHit) return;
-          const rectCurrentX = block.animX._value;
-          const rectCurrentY = block.animY._value;
-          const blockBox = { left: rectCurrentX, right: rectCurrentX + RECT_WIDTH, top: rectCurrentY, bottom: rectCurrentY + RECT_HEIGHT };
-          if (projX > blockBox.left && projX < blockBox.right && projY > blockBox.top && projY < blockBox.bottom) {
-            handleAnswerCollision(block);
-            proj.anim.stopAnimation();
-            setProjectiles((prev) => prev.filter((p) => p.id !== proj.id));
-          }
-        });
-      });
-    }, 16);
-    return () => clearInterval(gameLoop);
-  }, [playerX, playerY, answerBlocks, isRoundActive, projectiles]);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (moveDirection === 'left') {
-        setPlayerX(x => Math.max(x - 10, 0));
-      } else if (moveDirection === 'right') {
-        setPlayerX(x => Math.min(x + 10, screen.width - PLAYER_RADIUS * 2));
-      }
-    }, 16);
-    return () => clearInterval(interval);
-  }, [moveDirection, screen.width]);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setSkyOffset(offset => {
-        let next = offset - 1;
-        if (next <= -screen.width) next = 0;
-        return next;
-      });
-    }, 30);
-    return () => clearInterval(interval);
-  }, [screen.width]);
-
-  useEffect(() => {
-    if (animationIntervalRef.current) {
-      clearInterval(animationIntervalRef.current);
-      animationIntervalRef.current = null;
-    }
-    if (moveDirection !== prevDirection.current) {
-      if (moveDirection === 'right') setFrameIndex(RUN_RIGHT_START_INDEX);
-      else if (moveDirection === 'left') setFrameIndex(RUN_LEFT_START_INDEX);
-      else setFrameIndex(IDLE_FRAME_INDEX);
-      prevDirection.current = moveDirection;
-    } else if (moveDirection === null && frameIndex !== IDLE_FRAME_INDEX) {
-      setFrameIndex(IDLE_FRAME_INDEX);
-    }
-    if (moveDirection === 'right' || moveDirection === 'left') {
-      animationIntervalRef.current = setInterval(() => {
-        setFrameIndex(prev => {
-          if (moveDirection === 'right') return RUN_RIGHT_START_INDEX + ((prev - RUN_RIGHT_START_INDEX + 1) % RUN_RIGHT_FRAME_COUNT);
-          if (moveDirection === 'left') return RUN_LEFT_START_INDEX + ((prev - RUN_LEFT_START_INDEX + 1) % RUN_LEFT_FRAME_COUNT);
-          return IDLE_FRAME_INDEX;
-        });
-      }, ANIMATION_SPEED);
-    }
-    return () => { if (animationIntervalRef.current) clearInterval(animationIntervalRef.current); };
-  }, [moveDirection]);
-
-  useEffect(() => {
-    const loadSounds = async () => {
-      try {
-        const [jump, correct, wrong, run, laser] = await Promise.all([
-          Audio.Sound.createAsync(require('./assets/audio/jumpSound.mp3')),
-          Audio.Sound.createAsync(require('./assets/audio/correctSound.mp3')),
-          Audio.Sound.createAsync(require('./assets/audio/wrongSound.mp3')),
-          Audio.Sound.createAsync(require('./assets/audio/run.mp3')),
-          Audio.Sound.createAsync(require('./assets/audio/laserSound.mp3')),
-        ]);
-        jumpSound.current = jump.sound;
-        correctSound.current = correct.sound;
-        wrongSound.current = wrong.sound;
-        runSound.current = run.sound;
-        laserSound.current = laser.sound;
-      } catch (error) { 
-        // Erreur silencieuse lors du chargement des sons
-      }
-    };
-    loadSounds();
-    return () => {
-      jumpSound.current?.unloadAsync();
-      correctSound.current?.unloadAsync();
-      wrongSound.current?.unloadAsync();
-      runSound.current?.unloadAsync();
-      laserSound.current?.unloadAsync();
-    };
-  }, []);
-
-  useEffect(() => {
-    if (moveDirection === 'left' || moveDirection === 'right') {
-      runSound.current?.setIsLoopingAsync(true);
-      runSound.current?.replayAsync();
-    } else {
-      runSound.current?.stopAsync();
-    }
-  }, [moveDirection]);
-
-  // --- HOOKS D'EFFET ---
-
-  useEffect(() => {
-    // Gestion du splash screen
-    const splashTimer = setTimeout(() => {
-      setShowSplash(false);
-    }, 6000);
-
-    return () => clearTimeout(splashTimer);
-  }, []);
-
-  useEffect(() => {
-    if (moveDirection === 'left' || moveDirection === 'right') {
-      runSound.current?.setIsLoopingAsync(true);
-      runSound.current?.replayAsync();
-    } else {
-      runSound.current?.stopAsync();
-    }
-  }, [moveDirection]);
-
-  // --- FONCTIONS DE GESTION DU JEU ---
-
-  const handleAnswerCollision = (hitBlock) => {
-    if (!isRoundActive) return;
-    Speech.stop();
-    setIsRoundActive(false);
-    hitBlock.isHit = true;
-    
-    answerBlocks.forEach(b => b.animX.stopAnimation());
-
-    if (isJumping) {
-      playerY.stopAnimation();
-      Animated.timing(playerY, { toValue: groundY, duration: JUMP_DURATION, useNativeDriver: false }).start(() => setIsJumping(false));
-    }
-    answerBlocks.forEach(b => {
-      Animated.timing(b.animY, { toValue: screen.height + RECT_HEIGHT, duration: 800, useNativeDriver: false }).start();
-    });
-    if (hitBlock.isCorrect) {
-      correctSound.current?.replayAsync();
-      setScore(s => s + 10);
-      setFeedback('Correct !');
-    } else {
-      wrongSound.current?.replayAsync();
-      setFeedback("Incorrect !");
-      
-      setMissedQuestions(prev => {
-        const newArray = [...prev, currentQuestions[currentQuestionIndex]];
-        return newArray;
-      });
-      setLives(prevLives => {
-        const newLives = prevLives - 1;
-        if (newLives <= 0) {
-          Speech.stop(); // Arrêter la lecture audio quand game over
-          setTimeout(() => setIsGameOver(true), 1500);
-        }
-        return newLives;
-      });
-    }
-    
-    setTimeout(() => {
-      if (currentQuestionIndex === currentQuestions.length - 1) {
-        Speech.stop(); // Arrêter la lecture audio quand fin de chapitre
-        setIsChapterComplete(true);
+      if (savedLicense) {
+        setIsLicensed(true);
+      } else if (trialActive) {
+        // Période d'essai active
+        setIsLicensed(true);
+        setOnTrial(true);
+        setTrialTimeLeft(timeLeft);
       } else {
-        setCurrentQuestionIndex(prevIndex => prevIndex + 1);
+        setShowLicenseScreen(true); // Trial expired and no license, show license screen
       }
-    }, 1500);
-  };
 
-  const jump = () => {
-    if (isJumping || !isRoundActive) return;
-    setIsJumping(true);
-    jumpSound.current?.replayAsync();
-    Animated.timing(playerY, { toValue: jumpTargetY, duration: JUMP_DURATION, useNativeDriver: false }).start(({ finished }) => {
-      if (finished) {
-        Animated.timing(playerY, { toValue: groundY, duration: JUMP_DURATION, useNativeDriver: false }).start(() => setIsJumping(false));
-      }
-    });
-  };
-
-  const handlePower = () => {
-    laserSound.current?.replayAsync();
-    if (!isRoundActive) return;
-    // Position de départ ajustée pour sortir du sac à dos
-    const startX = playerX + PLAYER_RADIUS - 15;  // Décalée vers la gauche
-    const startY = playerY._value + FRAME_HEIGHT / 2 - 20;  // Légèrement plus bas
-    const id = Date.now() + Math.random();
-    const animValue = new Animated.Value(startY);
-    const newProjectile = { id, x: startX, anim: animValue };
-    setProjectiles((prev) => [...prev, newProjectile]);
-    Animated.timing(animValue, { toValue: -40, duration: 700, useNativeDriver: false }).start(() => {
-      setProjectiles((prev) => prev.filter((p) => p.id !== id));
-    });
-  };
-
-  const repeatQuestion = () => {
-    if (currentQuestions && currentQuestions[currentQuestionIndex]) {
-      const toRead = currentQuestions[currentQuestionIndex].texteOral || currentQuestions[currentQuestionIndex].question;
-      Speech.speak(toRead, { language: 'fr-FR' });
-    }
-  };
-
-  let touchStartX = 0, touchStartY = 0, touchStartTime = 0;
-  const handleTapOrSwipe = (evt, gestureState) => {
-    if (!isRoundActive) return;
-    const dx = gestureState.moveX - touchStartX;
-    const dy = gestureState.moveY - touchStartY;
-    const dt = Date.now() - touchStartTime;
-    if (Math.abs(dy) > 40 && dy < -20 && Math.abs(dx) < 60 && dt < 500) {
-      jump();
-    }
-  };
-
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onPanResponderGrant: (evt, gestureState) => {
-        touchStartX = gestureState.x0;
-        touchStartY = gestureState.y0;
-        touchStartTime = Date.now();
-        const playerCenterX = playerX + PLAYER_RADIUS;
-        if (gestureState.x0 > playerCenterX) {
-          setMoveDirection('right');
-        } else {
-          setMoveDirection('left');
-        }
-      },
-      onPanResponderMove: (evt, gestureState) => {
-        const x = gestureState.moveX;
-        const playerCenterX = playerX + PLAYER_RADIUS;
-        if (x > playerCenterX + 4) {
-          setMoveDirection('right');
-        } else if (x < playerCenterX - 4) {
-          setMoveDirection('left');
-        } else {
-          setMoveDirection(null);
-        }
-      },
-      onPanResponderRelease: (evt, gestureState) => {
-        handleTapOrSwipe(evt, gestureState);
-        setMoveDirection(null);
-      },
-    })
-  ).current;
-
-  const handleRestart = () => {
-    Speech.stop(); // Arrêter la lecture audio
-    setIsGameOver(false);
-    setIsChapterComplete(false);
-    setScore(0);
-    setLives(7);
-    setMissedQuestions([]);
-    setCurrentQuestionIndex(0);
-    setSelectedChapter(null); // Go back to chapter selection
-    setShowBilan(false);
-    setCurrentBilanIndex(0);
-  };
-
-  const handleReturnToMenu = () => {
-    Speech.stop(); // Arrêter la lecture audio
-    setIsGameOver(false);
-    setIsChapterComplete(false);
-    setScore(0);
-    setLives(7);
-    setMissedQuestions([]);
-    setCurrentQuestionIndex(0);
-    setSelectedChapter(null);
-    setShowBilan(false);
-    setCurrentBilanIndex(0);
-  };
-
-  // --- AFFICHAGE (RENDER) ---
-
-  useEffect(() => {
-    const initializeApp = async () => {
-      await lockOrientation();
-      await loadSounds();
-      
       // Animation du splash screen
       Animated.sequence([
         Animated.parallel([
@@ -1755,887 +1354,745 @@ export default function App() {
 
       setTimeout(() => {
         setShowSplash(false);
-      }, 6000);
+        if (!showLicenseScreen) {
+          setCurrentView(storedUser ? 'menu' : 'user_select');
+        }
+      }, 6000); // Durée totale de l'animation du splash
     };
-
-    initializeApp();
+    init();
+    const loadSounds = async () => {
+      try {
+        const { sound: jump } = await Audio.Sound.createAsync(require('./assets/audio/jumpSound.mp3')); jumpSound.current = jump;
+        const { sound: correct } = await Audio.Sound.createAsync(require('./assets/audio/correctSound.mp3')); correctSound.current = correct;
+        const { sound: wrong } = await Audio.Sound.createAsync(require('./assets/audio/wrongSound.mp3')); wrongSound.current = wrong;
+        const { sound: run } = await Audio.Sound.createAsync(require('./assets/audio/run.mp3')); runSound.current = run;
+        const { sound: laser } = await Audio.Sound.createAsync(require('./assets/audio/laserSound.mp3')); laserSound.current = laser;
+      } catch (error) { console.warn("Erreur chargement sons:", error); }
+    };
+    loadSounds();
+    return () => { jumpSound.current?.unloadAsync(); correctSound.current?.unloadAsync(); wrongSound.current?.unloadAsync(); runSound.current?.unloadAsync(); laserSound.current?.unloadAsync(); }
   }, []);
-
-  // Animation du titre du menu des chapitres
-  useEffect(() => {
-    if (!showSplash && !selectedChapter) {
-      // Animation d'apparition du titre du menu
-      Animated.parallel([
-        Animated.timing(menuTitleFadeAnim, {
-          toValue: 1,
-          duration: 1200,
-          useNativeDriver: true,
-        }),
-        Animated.timing(menuTitleSlideAnim, {
-          toValue: 0,
-          duration: 1200,
-          useNativeDriver: true,
-        }),
-        Animated.timing(menuTitleScaleAnim, {
-          toValue: 1,
-          duration: 1200,
-          useNativeDriver: true,
-        }),
-      ]).start();
-
-      // Animation de pulsation continue pour le titre du menu
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(menuTitlePulseAnim, {
-            toValue: 1.05,
-            duration: 2500,
-            useNativeDriver: true,
-          }),
-          Animated.timing(menuTitlePulseAnim, {
-            toValue: 1,
-            duration: 2500,
-            useNativeDriver: true,
-          }),
-        ])
-      ).start();
-
-      // Animation de rotation subtile pour le titre du menu
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(menuTitleRotateAnim, {
-            toValue: 1,
-            duration: 4000,
-            useNativeDriver: true,
-          }),
-          Animated.timing(menuTitleRotateAnim, {
-            toValue: 0,
-            duration: 4000,
-            useNativeDriver: true,
-          }),
-        ])
-      ).start();
-    }
-  }, [showSplash, selectedChapter]);
-
-  // Charger la liste des utilisateurs et l'utilisateur courant au lancement
-  useEffect(() => {
-    AsyncStorage.getItem('USERS_LIST').then(list => {
-      setUserList(list ? JSON.parse(list) : []);
-    });
-    AsyncStorage.getItem('CURRENT_USER').then(name => {
-      if (name) setUserName(name);
-    });
-  }, []);
-
-  // Fonction pour sélectionner un utilisateur
-  const handleSelectUser = async (name) => {
-    await AsyncStorage.setItem('CURRENT_USER', name);
-    setUserName(name);
-  };
-
-  // Fonction pour ajouter un utilisateur
-  const handleAddUser = async (name) => {
-    const newList = [...userList, name];
-    await AsyncStorage.setItem('USERS_LIST', JSON.stringify(newList));
-    await AsyncStorage.setItem('CURRENT_USER', name);
-    setUserList(newList);
-    setUserName(name);
-  };
-
-  // Fonction pour changer d'utilisateur
-  const handleChangeUser = async () => {
-    await AsyncStorage.removeItem('CURRENT_USER');
-    setUserName(null);
-  };
-
-  // Affichage de l'écran de sélection/ajout d'utilisateur si pas d'utilisateur courant
-  if (!userName) {
-    return <UserSelectScreen users={userList} onSelectUser={handleSelectUser} onAddUser={handleAddUser} />;
-  }
-
-  if (showSplash) {
-    const spin = rotateAnim.interpolate({
-      inputRange: [0, 1],
-      outputRange: ['0deg', '5deg']
-    });
-
-    return (
-      <Animated.View style={[styles.splashContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }, { scale: scaleAnim }] }]}>
-        <Image source={splashImage} style={styles.splashImage} resizeMode="cover" />
-        <Animated.View style={[styles.splashOverlay, { opacity: fadeAnim }]}>
-          <Animated.Text 
-            style={[
-              styles.splashTitle, 
-              { 
-                transform: [
-                  { translateX: titleSlideAnim },
-                  { rotate: spin },
-                  { scale: pulseAnim }
-                ] 
-              }
-            ]}
-          >
-            KLATA
-          </Animated.Text>
-          <Animated.Text 
-            style={[
-              styles.splashSlogan, 
-              { transform: [{ translateX: sloganSlideAnim }] }
-            ]}
-          >
-            Amusons-nous à apprendre
-          </Animated.Text>
-          <Animated.Text 
-            style={[
-              styles.splashSubtitle, 
-              { transform: [{ translateX: subtitleSlideAnim }] }
-            ]}
-          >
-            MATHEMATIQUES
-          </Animated.Text>
-          <Animated.Text 
-            style={[
-              styles.splashLevel, 
-              { transform: [{ translateX: levelSlideAnim }] }
-            ]}
-          >
-            Niveau 3ème, format APC
-          </Animated.Text>
-          <Animated.View 
-            style={[
-              styles.splashCredits, 
-              { transform: [{ translateY: creditsSlideAnim }] }
-            ]}
-          >
-            <Text style={styles.splashCreditText}>Créé par Aboya Guy Martial NANOU</Text>
-            <Text style={styles.splashDateText}>21 juin 2025</Text>
-          </Animated.View>
-        </Animated.View>
-      </Animated.View>
-    );
-  }
-
-  if (isGameOver) {
-    const maxScore = currentQuestions.length * 10;
-    const finalGrade = maxScore > 0 ? ((score / maxScore) * 20).toFixed(1) : 0;
-
-    if (showBilan) {
-      const currentError = missedQuestions[currentBilanIndex];
-      return (
-        <View style={styles.bilanContainer}>
-          <Text style={styles.bilanTitle}>📊 Bilan des erreurs</Text>
-          <Text style={styles.bilanCounterText}>{currentBilanIndex + 1} / {missedQuestions.length}</Text>
-          
-          <View style={{ flex: 1, justifyContent: 'flex-start', paddingTop: 20 }}>
-            {missedQuestions.length > 0 && currentError ? (
-              <View key={currentBilanIndex} style={styles.bilanQuestionContainer}>
-                <View style={styles.bilanQuestionSection}>
-                  <Text style={styles.bilanQuestionLabel}>❌ Question {currentBilanIndex + 1}:</Text>
-                  <View style={styles.bilanQuestionContent}>
-                    <MathRenderer 
-                      math={currentError.question} 
-                      color="black" 
-                      fontSize={16}
-                    />
-                  </View>
-                </View>
-                
-                <View style={styles.bilanAnswerSection}>
-                  <Text style={styles.bilanAnswerLabel}>✅ Réponse correcte:</Text>
-                  <View style={styles.bilanAnswerContent}>
-                    <MathRenderer 
-                      math={currentError.correct} 
-                      color="green" 
-                      fontSize={16}
-                    />
-                  </View>
-                </View>
-              </View>
-            ) : (
-              <Text style={styles.noMissedQuestionsText}>Pas d'erreurs à afficher.</Text>
-            )}
-          </View>
-
-          {missedQuestions.length > 1 && (
-            <View style={styles.bilanNavigation}>
-              <TouchableOpacity
-                onPress={() => setCurrentBilanIndex(i => i - 1)}
-                disabled={currentBilanIndex === 0}
-                style={[styles.bilanNavButton, currentBilanIndex === 0 && styles.disabledButton]}
-              >
-                <Text style={styles.bilanNavButtonText}>Précédent</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => setCurrentBilanIndex(i => i + 1)}
-                disabled={currentBilanIndex >= missedQuestions.length - 1}
-                style={[styles.bilanNavButton, currentBilanIndex >= missedQuestions.length - 1 && styles.disabledButton]}
-              >
-                <Text style={styles.bilanNavButtonText}>Suivant</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          <TouchableOpacity style={styles.backButton} onPress={() => setShowBilan(false)}>
-            <Text style={styles.backButtonText}>← Retour</Text>
-          </TouchableOpacity>
-          
-          {currentBilanIndex === missedQuestions.length - 1 && (
-            <TouchableOpacity style={styles.restartButton} onPress={handleReturnToMenu}>
-              <Text style={styles.restartButtonText}>Retour au menu</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      );
-    }
-
-    return (
-      <View style={styles.gameOverContainer}>
-        <Text style={styles.gameOverTitle}>Game Over</Text>
-        <Text style={styles.finalScoreTextSmall}>Score : {score} / {maxScore}</Text>
-        <Text style={styles.finalScoreTextSmall}>Note finale : {finalGrade} / 20</Text>
-        
-        <TouchableOpacity style={styles.bilanButton} onPress={() => { setShowBilan(true); setCurrentBilanIndex(0); }}>
-          <Text style={styles.bilanButtonText}>📊 Voir le bilan des erreurs</Text>
-        </TouchableOpacity>
-
-        {missedQuestions.length === 0 && (
-          <TouchableOpacity style={styles.restartButton} onPress={handleRestart}>
-            <Text style={styles.restartButtonText}>Retour au menu</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-    );
-  }
   
-  if (isChapterComplete) {
-    const maxScore = currentQuestions.length * 10;
-    const finalGrade = maxScore > 0 ? ((score / maxScore) * 20).toFixed(1) : 0;
+  useEffect(() => { isRoundActiveRef.current = isRoundActive; }, [isRoundActive]);
+  useEffect(() => { if (selectedChapter) { const d = questionsLibrary.maths[selectedChapter]; const fq = d.map(q => ({ ...q, allAnswers: shuffleArray([q.correct, ...(q.wrongs || [])]) })); setCurrentQuestions(shuffleArray(fq)); setCurrentQuestionIndex(0); setScore(0); setLives(7); setMissedQuestions([]); setCurrentView('game'); } }, [selectedChapter]);
+  useEffect(() => {
+    if (currentView !== 'game' || !currentQuestions[currentQuestionIndex]) return;
 
-    if (showBilan) {
-      const currentError = missedQuestions[currentBilanIndex];
-      return (
-        <View style={styles.bilanContainer}>
-          <Text style={styles.bilanTitle}>📊 Bilan des erreurs</Text>
-          <Text style={styles.bilanCounterText}>{currentBilanIndex + 1} / {missedQuestions.length}</Text>
-          
-          <View style={{ flex: 1, justifyContent: 'flex-start', paddingTop: 20 }}>
-            {missedQuestions.length > 0 && currentError ? (
-              <View key={currentBilanIndex} style={styles.bilanQuestionContainer}>
-                <View style={styles.bilanQuestionSection}>
-                  <Text style={styles.bilanQuestionLabel}>❌ Question {currentBilanIndex + 1}:</Text>
-                  <View style={styles.bilanQuestionContent}>
-                    <MathRenderer 
-                      math={currentError.question} 
-                      color="black" 
-                      fontSize={16}
-                    />
-                  </View>
-                </View>
-                
-                <View style={styles.bilanAnswerSection}>
-                  <Text style={styles.bilanAnswerLabel}>✅ Réponse correcte:</Text>
-                  <View style={styles.bilanAnswerContent}>
-                    <MathRenderer 
-                      math={currentError.correct} 
-                      color="green" 
-                      fontSize={16}
-                    />
-                  </View>
-                </View>
-              </View>
-            ) : (
-              <Text style={styles.noMissedQuestionsText}>🎉 Félicitations, aucune erreur !</Text>
-            )}
-          </View>
+    // 1. On masque immédiatement la question et on prépare la nouvelle manche
+    questionOpacityAnim.setValue(0);
+    setIsRoundActive(false); // La manche n'est pas jouable pendant le rendu
 
-          {missedQuestions.length > 1 && (
-            <View style={styles.bilanNavigation}>
-              <TouchableOpacity
-                onPress={() => setCurrentBilanIndex(i => i - 1)}
-                disabled={currentBilanIndex === 0}
-                style={[styles.bilanNavButton, currentBilanIndex === 0 && styles.disabledButton]}
-              >
-                <Text style={styles.bilanNavButtonText}>Précédent</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => setCurrentBilanIndex(i => i + 1)}
-                disabled={currentBilanIndex >= missedQuestions.length - 1}
-                style={[styles.bilanNavButton, currentBilanIndex >= missedQuestions.length - 1 && styles.disabledButton]}
-              >
-                <Text style={styles.bilanNavButtonText}>Suivant</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          <TouchableOpacity style={styles.backButton} onPress={() => setShowBilan(false)}>
-            <Text style={styles.backButtonText}>← Retour</Text>
-          </TouchableOpacity>
-          
-          {currentBilanIndex === missedQuestions.length - 1 && (
-            <TouchableOpacity style={styles.restartButton} onPress={handleReturnToMenu}>
-              <Text style={styles.restartButtonText}>Retour au menu</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      );
-    }
-
-    return (
-      <View style={styles.gameOverContainer}>
-        <Text style={[styles.gameOverTitle, { color: '#1976d2' }]}>Fin de Partie !</Text>
-        <Text style={styles.finalScoreTextSmall}>Score : {score} / {maxScore}</Text>
-        <Text style={styles.finalScoreTextSmall}>Note finale : {finalGrade} / 20</Text>
-        
-        <TouchableOpacity style={styles.bilanButton} onPress={() => { setShowBilan(true); setCurrentBilanIndex(0); }}>
-          <Text style={styles.bilanButtonText}>📊 Voir le bilan des erreurs</Text>
-        </TouchableOpacity>
-
-        {missedQuestions.length === 0 && (
-          <TouchableOpacity style={styles.restartButton} onPress={handleReturnToMenu}>
-            <Text style={styles.restartButtonText}>Retour au menu</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-    );
-  }
-
-  if (!selectedChapter) {
-    const menuTitleSpin = menuTitleRotateAnim.interpolate({
-      inputRange: [0, 1],
-      outputRange: ['-2deg', '2deg']
+    const q = currentQuestions[currentQuestionIndex];
+    Speech.speak(q.texteOral || q.question, { language: 'fr-FR' });
+    const l = shuffleArray([screen.height * .3, screen.height * .34, screen.height * .44, screen.height * .5]);
+    
+    // 2. On crée les blocs réponses, mais ils sont initialement invisibles
+    const blocks = q.allAnswers.map((a, i) => {
+      const x = screen.width + i * (RECT_WIDTH + 220);
+      return {
+        id: Date.now() + i,
+        text: a,
+        isCorrect: a === q.correct,
+        isHit: false,
+        animX: new Animated.Value(x),
+        animY: new Animated.Value(l[i % 4]),
+        scaleAnim: new Animated.Value(1),
+        opacityAnim: new Animated.Value(0) // Opacité initialisée à 0
+      };
     });
 
-    return (
-      <View style={styles.menuContainer}>
-        <View style={styles.menuHeaderRow}>
-          <TouchableOpacity style={styles.changeUserButtonAbsolute} onPress={handleChangeUser}>
-            <Text style={styles.changeUserButtonText}>Changer d'utilisateur</Text>
-          </TouchableOpacity>
-          <View style={styles.menuTitleAbsoluteCenter}>
-            <Animated.Text 
-              style={[
-                styles.menuTitle, 
-                { 
-                  opacity: menuTitleFadeAnim,
-                  transform: [
-                    { translateX: menuTitleSlideAnim },
-                    { scale: menuTitleScaleAnim },
-                    { scale: menuTitlePulseAnim },
-                    { rotate: menuTitleSpin }
-                  ] 
-                }
-              ]}
-            >
-              Choisis un chapitre
-            </Animated.Text>
-          </View>
-        </View>
-        <FlatList
-          data={chapterNames}
-          renderItem={({ item }) => (
-            <TouchableOpacity style={styles.chapterButton} onPress={() => setSelectedChapter(item)}>
-              <Text style={styles.chapterButtonText}>{item}</Text>
-            </TouchableOpacity>
-          )}
-          keyExtractor={(item) => item}
-        />
-        <Text style={{ marginTop: 12, color: '#333', fontStyle: 'italic' }}>
-          Utilisateur : <Text style={{ fontWeight: 'bold', color: '#333' }}>{userName}</Text>
-        </Text>
-      </View>
-    );
+    setAnswerBlocks(blocks);
+
+    // 3. On attend 2 secondes pour laisser le temps au rendu LaTeX
+    setTimeout(() => {
+      
+      // 4. On fait apparaître la question ET les réponses en même temps
+      Animated.parallel([
+        // Fondu de la question
+        Animated.timing(questionOpacityAnim, {
+          toValue: 1,
+          duration: 500, // Durée du fondu
+          useNativeDriver: true,
+        }),
+        // Fondu des réponses, avec un léger décalage entre chaque
+        Animated.stagger(100, 
+          blocks.map(block => 
+            Animated.timing(block.opacityAnim, {
+              toValue: 1, // Rendre visible
+              duration: 400,
+              useNativeDriver: false,
+            })
+          )
+        )
+      ]).start(() => {
+        // La manche devient jouable SEULEMENT après l'apparition
+        setIsRoundActive(true);
+      });
+
+      // 5. On démarre le mouvement des blocs en même temps que leur apparition
+      blocks.forEach(block => {
+        const totalDistance = block.animX._value + RECT_WIDTH;
+        Animated.timing(block.animX, {
+          toValue: -RECT_WIDTH,
+          duration: totalDistance / BLOCK_SPEED * 1000,
+          useNativeDriver: false,
+          easing: Easing.linear
+        }).start();
+      });
+
+    }, 2000); // <-- VOTRE DÉLAI DE MASQUAGE DE 2 SECONDES
+
+  }, [currentQuestionIndex, currentView]);
+  useEffect(() => {
+    if (currentView !== 'game') return;
+
+    const loop = setInterval(() => {
+      if (!isRoundActiveRef.current) return;
+
+      // --- collisions personnage / blocs ---
+      const pB = { x: playerX, y: playerY._value, w: FRAME_WIDTH, h: FRAME_HEIGHT };
+      answerBlocks.forEach(b => {
+        if (b.isHit) return;
+        const bB = { x: b.animX._value, y: b.animY._value, w: RECT_WIDTH, h: RECT_HEIGHT };
+        if (pB.x < bB.x + bB.w && pB.x + pB.w > bB.x && pB.y < bB.y + bB.h && pB.y + pB.h > bB.y)
+          handleAnswerCollision(b);
+      });
+
+      // --- collisions projectiles / blocs ---
+      projectiles.forEach(p => {
+        const pB = { x: p.x, y: p.anim._value, w: 40, h: 40 };
+        answerBlocks.forEach(b => {
+          if (b.isHit) return;
+          const bB = { x: b.animX._value, y: b.animY._value, w: RECT_WIDTH, h: RECT_HEIGHT };
+          if (pB.x < bB.x + bB.w && pB.x + pB.w > bB.x && pB.y < bB.y + bB.h && pB.y + pB.h > bB.y) {
+            setTimeout(() => {
+              handleAnswerCollision(b);
+              setProjectiles(prev => prev.filter(pr => pr.id !== p.id));
+            }, 0);
+          }
+        });
+      });
+      setProjectiles(prev => prev.filter(pr => !pr.isHit));
+
+      // --- nouvelle vérification : tous les blocs sont-ils sortis à gauche ? ---
+      if (answerBlocks.length > 0) {
+        const allOffScreen = answerBlocks.every(block => block.animX._value < -RECT_WIDTH);
+        if (allOffScreen) handleMissedQuestion();
+      }
+    }, 100);      // Boucle allégée (100 ms)
+
+    return () => clearInterval(loop);
+  }, [currentView, answerBlocks, projectiles, lives, currentQuestionIndex]);
+  useEffect(() => { const i = setInterval(() => { if (currentView === 'game' && moveDirection === 'left') setPlayerX(x => Math.max(x - 10, 0)); else if (currentView === 'game' && moveDirection === 'right') setPlayerX(x => Math.min(x + 10, screen.width - FRAME_WIDTH)); }, 16); return () => clearInterval(i); }, [moveDirection, screen.width, currentView]);
+  useEffect(() => { if (animationIntervalRef.current) clearInterval(animationIntervalRef.current); if (moveDirection) { runSound.current?.replayAsync(); animationIntervalRef.current = setInterval(() => { setFrameIndex(p => { if (moveDirection === 'right') return RUN_RIGHT_START_INDEX + ((p - RUN_RIGHT_START_INDEX + 1) % RUN_RIGHT_FRAME_COUNT); if (moveDirection === 'left') return RUN_LEFT_START_INDEX + ((p - RUN_LEFT_START_INDEX + 1) % RUN_LEFT_FRAME_COUNT); return IDLE_FRAME_INDEX; }); }, ANIMATION_SPEED); } else { runSound.current?.stopAsync(); setFrameIndex(IDLE_FRAME_INDEX); } return () => { if (animationIntervalRef.current) clearInterval(animationIntervalRef.current); }; }, [moveDirection]);
+  useEffect(() => { const i = setInterval(() => { setSkyOffset(o => (o - 1) <= -screen.width ? 0 : o - 1); }, 30); return () => clearInterval(i); }, [screen.width]);
+
+  // Décrémenter le compte-à-rebours quand l'essai est actif
+  useEffect(() => {
+    if (!onTrial) return;
+
+    const timer = setInterval(() => {
+      setTrialTimeLeft(prev => {
+        const next = prev - 1000;
+        if (next <= 0) {
+          clearInterval(timer);
+          // Fin de l'essai – on affiche l'écran de licence
+          setOnTrial(false);
+          setIsLicensed(false);
+          setShowLicenseScreen(true);
+          return 0;
+        }
+        return next;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [onTrial]);
+
+  const handleEndGame = () => { const max = currentQuestions.length * 10; const grade = max > 0 ? (score / max) * 20 : 0; saveGameResult(userName, { chapter: selectedChapter, date: new Date().toISOString(), score, maxScore: max, grade, missedQuestions }); };
+  const handleAnswerCollision = (block) => {
+    // 1. Vérifier si la manche est active et si le bloc n'a pas déjà été traité
+    if (!isRoundActiveRef.current || (block.isHit && !block.isTimeout)) {
+      return;
+    }
+
+    // 2. "Verrouiller" la manche pour éviter d'autres collisions
+    isRoundActiveRef.current = false;
+    setIsRoundActive(false);
+    Speech.stop();
+
+    // Arrêter l'animation des blocs uniquement si ce n'est pas un timeout
+    if (!block.isTimeout) {
+      block.isHit = true;
+      answerBlocks.forEach(b => b.animX.stopAnimation());
+    }
+
+    // 3. Afficher le feedback visuel et sonore
+    const positiveFeedback = ['Bravo !', 'Très bien !', 'Super !', 'Bonne réponse !'];
+    const feedbackText = block.isTimeout
+      ? 'Trop lent !'
+      : (block.isCorrect ? positiveFeedback[Math.floor(Math.random() * positiveFeedback.length)] : 'Incorrect');
+    
+    const feedbackColor = block.isCorrect ? '#2e7d32' : '#c62828';
+    
+    const newText = {
+      id: Date.now() + Math.random(), text: feedbackText, color: feedbackColor,
+      x: block.animX._value, y: block.animY._value, anim: new Animated.Value(0),
+    };
+    setFloatingTexts(currentTexts => [...currentTexts, newText]);
+    Animated.timing(newText.anim, { toValue: 1, duration: 2000, useNativeDriver: true }).start(() => {
+      setFloatingTexts(currentTexts => currentTexts.filter(t => t.id !== newText.id));
+    });
+
+    if (block.isCorrect) {
+      correctSound.current?.replayAsync();
+      setScore(s => s + 10);
+      if (block.scaleAnim) {
+        Animated.sequence([
+          Animated.timing(block.scaleAnim, { toValue: 1.2, duration: 200, useNativeDriver: false }),
+          Animated.timing(block.scaleAnim, { toValue: 1, duration: 200, useNativeDriver: false })
+        ]).start();
+      }
+    } else {
+      wrongSound.current?.replayAsync();
+      // On met à jour les questions manquées en utilisant l'index de la question actuelle
+      setCurrentQuestionIndex(prevIndex => {
+        setMissedQuestions(p => [...p, currentQuestions[prevIndex]]);
+        return prevIndex; // Important: on ne change pas l'index ici, on le fait plus tard
+      });
+    }
+
+    // 4. Planifier la suite (prochaine question ou fin du jeu) après un court délai
+    setTimeout(() => {
+      // On utilise la forme fonctionnelle de setLives pour garantir d'avoir la dernière valeur
+      setLives(prevLives => {
+        // On ne perd une vie que si la réponse est incorrecte ou si le temps est écoulé
+        const newLives = block.isCorrect ? prevLives : prevLives - 1;
+
+        if (newLives <= 0) {
+          handleEndGame();
+          setCurrentView('game_over');
+          return 0; // On met à jour les vies à 0 et on arrête
+        }
+
+        // S'il reste des vies, on passe à la suite
+        setCurrentQuestionIndex(prevIndex => {
+          if (prevIndex === currentQuestions.length - 1) {
+            handleEndGame();
+            setCurrentView('chapter_complete');
+            return prevIndex; // On reste sur le dernier index
+          } else {
+            return prevIndex + 1; // On passe à la question suivante
+          }
+        });
+
+        return newLives; // On met à jour le nouvel état des vies
+      });
+    }, 1500);
+  };
+
+  // --- NOUVELLE FONCTION : gère une question manquée ---
+  const handleMissedQuestion = () => {
+    if (!isRoundActiveRef.current) return;   // manche déjà terminée
+
+    isRoundActiveRef.current = false;
+    setIsRoundActive(false);
+
+    Speech.stop();
+    wrongSound.current?.replayAsync();
+
+    // Message flottant
+    const newText = {
+      id: Date.now() + Math.random(),
+      text: 'Manqué !',
+      color: '#fbc02d',
+      x: screen.width / 2,
+      y: screen.height / 3,
+      anim: new Animated.Value(0),
+    };
+    setFloatingTexts(t => [...t, newText]);
+    Animated.timing(newText.anim, { toValue: 1, duration: 2000, useNativeDriver: true })
+            .start(() => setFloatingTexts(t => t.filter(ft => ft.id !== newText.id)));
+
+    setMissedQuestions(p => [...p, currentQuestions[currentQuestionIndex]]);
+    const newLives = lives - 1;
+    setLives(newLives);
+
+    setTimeout(() => {
+      if (newLives <= 0) { handleEndGame(); setCurrentView('game_over'); return; }
+      if (currentQuestionIndex === currentQuestions.length - 1) {
+        handleEndGame(); setCurrentView('chapter_complete');
+      } else {
+        setCurrentQuestionIndex(i => i + 1);
+      }
+    }, 1500);
+  };
+
+  const jump = () => { if(isJumping || currentView !== 'game') return; jumpSound.current?.replayAsync(); setIsJumping(true); Animated.sequence([ Animated.timing(playerY,{toValue: groundY - 150, duration: JUMP_DURATION, useNativeDriver: false, easing: Easing.out(Easing.quad)}), Animated.timing(playerY,{toValue: groundY, duration: JUMP_DURATION, useNativeDriver: false, easing: Easing.in(Easing.quad)}) ]).start(()=>setIsJumping(false)); };
+  const handlePower = () => { if (currentView !== 'game' || projectiles.length > 2) return; laserSound.current?.replayAsync(); const startX = playerX + FRAME_WIDTH / 2 - 20; const startY = playerY._value + FRAME_HEIGHT / 2; const id = Date.now() + Math.random(); const animValue = new Animated.Value(startY); const newProjectile = { id, x: startX, anim: animValue }; setProjectiles(p => [...p, newProjectile]); Animated.timing(animValue, { toValue: -50, duration: 800, useNativeDriver: false, easing: Easing.linear }).start(() => { setProjectiles(p => p.filter(pr => pr.id !== id)); }); };
+  const repeatQuestion = () => Speech.speak(currentQuestions[currentQuestionIndex]?.texteOral || currentQuestions[currentQuestionIndex]?.question, { language: 'fr-FR' });
+  const panResponder = useRef(PanResponder.create({ onStartShouldSetPanResponder: () => currentView === 'game', onPanResponderGrant: (e, g) => { if (g.x0 > screen.width / 2) setMoveDirection('right'); else setMoveDirection('left'); }, onPanResponderMove: (e, g) => { if (g.moveX > screen.width / 2 + 20) setMoveDirection('right'); else if (g.moveX < screen.width / 2 - 20) setMoveDirection('left'); else setMoveDirection(null);}, onPanResponderRelease: (e, g) => { if (Math.abs(g.dx)<20 && g.dy<-30) jump(); setMoveDirection(null); } })).current;
+  const handleReturnToMenu = () => { Speech.stop(); setSelectedChapter(null); setShowBilan(false); setCurrentView('menu'); };
+  const handleSelectUser = async(n)=>{await AsyncStorage.setItem('CURRENT_USER',n);setUserName(n);setCurrentView('menu');};
+  const handleAddUser = async(n)=>{const l=[...userList,n];await AsyncStorage.setItem('USERS_LIST',JSON.stringify(l));setUserList(l);handleSelectUser(n);};
+  const handleChangeUser = async()=>{await AsyncStorage.removeItem('CURRENT_USER');setUserName(null);setCurrentView('user_select');};
+
+  // Rejouer uniquement les questions ratées
+  const handleReplayMistakes = () => {
+    if (missedQuestions.length === 0) return;
+    // Prépare une nouvelle série de questions basée sur les erreurs
+    const remediations = shuffleArray(missedQuestions).map(q => ({
+      ...q,
+      allAnswers: shuffleArray([q.correct, ...(q.wrongs || [])])
+    }));
+
+    setCurrentQuestions(remediations);
+    setCurrentQuestionIndex(0);
+    setScore(0);
+    setLives(7);
+    setMissedQuestions([]);
+    setCurrentView('game');
+  };
+
+  const renderContent = () => {
+      switch (currentView) {
+          case 'splash':
+            const spin = rotateAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: ['0deg', '5deg']
+            });
+            const shimmerTranslate = shimmerAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: ['0%', '100%']
+            });
+            return (
+              <Animated.View style={[styles.splashContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }, { scale: scaleAnim }] }]}>
+                <Image source={splashImage} style={styles.splashImage} resizeMode="cover" />
+                <Animated.View style={[styles.splashOverlay, { opacity: fadeAnim }]}>
+                  <Animated.Text 
+                    style={[
+                      styles.splashTitle, 
+                      { 
+                        transform: [
+                          { translateX: titleSlideAnim },
+                          { rotate: spin },
+                          { scale: pulseAnim }
+                        ] 
+                      }
+                    ]}
+                  >
+                    KLATA
+                  </Animated.Text>
+                  <Animated.Text 
+                    style={[
+                      styles.splashSlogan, 
+                      { transform: [{ translateX: sloganSlideAnim }] }
+                    ]}
+                  >
+                    Amusons-nous à apprendre
+                  </Animated.Text>
+                  <Animated.Text 
+                    style={[
+                      styles.splashSubtitle, 
+                      { transform: [{ translateX: subtitleSlideAnim }] }
+                    ]}
+                  >
+                    MATHEMATIQUES
+                  </Animated.Text>
+                  <Animated.Text 
+                    style={[
+                      styles.splashLevel, 
+                      { transform: [{ translateX: levelSlideAnim }] }
+                    ]}
+                  >
+                    Niveau 3ème, format APC
+                  </Animated.Text>
+                  <Animated.View 
+                    style={[
+                      styles.splashCredits, 
+                      { transform: [{ translateY: creditsSlideAnim }] }
+                    ]}
+                  >
+                    <Text style={styles.splashCreditsText}>Développé par NANOU Aboya Guy</Text>
+                    <Text style={styles.splashCreditsText}>Version 1.0</Text>
+                  </Animated.View>
+                </Animated.View>
+              </Animated.View>
+            );
+          case 'user_select': return <UserSelectScreen users={userList} onSelectUser={handleSelectUser} onAddUser={handleAddUser} />;
+          case 'profile': return <ProfileScreen userName={userName} onBack={() => setCurrentView('menu')} />;
+          case 'menu': return (<View style={styles.menuContainer}><View style={styles.menuHeaderRow}><TouchableOpacity style={styles.changeUserButtonAbsolute} onPress={handleChangeUser}><Text style={styles.changeUserButtonText}>Changer</Text></TouchableOpacity><Text style={[styles.menuTitle,{fontSize:32,marginBottom:10}]}>Choisis un chapitre</Text></View><TouchableOpacity style={styles.profileButton} onPress={()=>setCurrentView('profile')}><Text style={styles.profileButtonText}>📊 Mon Profil</Text></TouchableOpacity><FlatList data={chapterNames} renderItem={({item})=><TouchableOpacity style={styles.chapterButton} onPress={()=>setSelectedChapter(item)}><Text style={styles.chapterButtonText}>{item}</Text></TouchableOpacity>} keyExtractor={item=>item}/><Text style={styles.currentUserText}>Joueur: <Text style={{fontWeight:'bold'}}>{userName}</Text></Text></View>);
+          case 'game_over': case 'chapter_complete': const isW=currentView==='chapter_complete',mS=currentQuestions.length*10,fG=mS>0?(score/mS)*20:0,cE=missedQuestions[currentBilanIndex];if(showBilan&&cE){return(<View style={styles.bilanContainer}><Text style={styles.bilanTitle}>Bilan des erreurs</Text><Text style={styles.bilanCounterText}>{currentBilanIndex+1}/{missedQuestions.length}</Text><View style={styles.bilanContentWrapper}><View style={styles.bilanQuestionSection}><Text style={styles.bilanQuestionLabel}>Question:</Text><View style={styles.bilanQuestionContent}><MathRenderer math={cE.question} color="black" style={{ flexWrap: 'wrap' }}/></View></View><View style={styles.bilanAnswerSection}><Text style={styles.bilanAnswerLabel}>Réponse Correcte:</Text><View style={styles.bilanAnswerContent}><MathRenderer math={cE.correct} color="green" style={{ flexWrap: 'wrap' }}/></View></View></View><View style={styles.bilanNavigation}><TouchableOpacity onPress={()=>setCurrentBilanIndex(i=>i-1)} disabled={currentBilanIndex===0} style={[styles.bilanNavButton,currentBilanIndex===0&&styles.disabledButton]}><Text style={styles.bilanNavButtonText}>Précédent</Text></TouchableOpacity><TouchableOpacity style={styles.bilanNavButton} onPress={()=>setShowBilan(false)}><Text style={styles.bilanNavButtonText}>Retour</Text></TouchableOpacity><TouchableOpacity onPress={()=>setCurrentBilanIndex(i=>i+1)} disabled={currentBilanIndex>=missedQuestions.length-1} style={[styles.bilanNavButton,currentBilanIndex>=missedQuestions.length-1&&styles.disabledButton]}><Text style={styles.bilanNavButtonText}>Suivant</Text></TouchableOpacity></View></View>);} return(<View style={styles.gameOverContainer}><Text style={[styles.gameOverTitle,{color:isW?'#1976d2':'#c62828'}]}>{isW?"Chapitre Terminé !":"Game Over"}</Text><Text style={styles.finalScoreTextSmall}>Score: {score}/{mS}</Text><Text style={styles.finalScoreTextSmall}>Note finale: {Math.ceil(fG)}/20</Text>{missedQuestions.length>0&&<TouchableOpacity style={styles.bilanButton} onPress={()=>{setShowBilan(true);setCurrentBilanIndex(0);}}><Text style={styles.bilanButtonText}>Voir mes erreurs</Text></TouchableOpacity>}<TouchableOpacity style={styles.restartButton} onPress={handleRestart}><Text style={styles.restartButtonText}>Rejouer</Text></TouchableOpacity><TouchableOpacity style={styles.backButton} onPress={handleReturnToMenu}><Text style={styles.backButtonText}>Retour au menu</Text></TouchableOpacity></View>);
+          case 'game':
+            return (
+              <View style={{ flex: 1 }} {...panResponder.panHandlers}>
+                <ImageBackground source={bgsta} style={{ flex: 1 }} resizeMode="cover">
+                  <Animated.Image source={sky1} style={{ position: 'absolute', width: screen.width * 2, height: screen.height, left: skyOffset }} resizeMode="cover" />
+                  
+                  <View style={styles.container}>
+                    {/* Interface utilisateur en haut */}
+                    <View style={styles.uiContainer}>
+                      <Text style={styles.scoreText}>Score: {score}</Text>
+                      <Text style={styles.livesText}>Vies: {lives} ❤️</Text>
+                      
+                      {/* La question, maintenant avec animation d'opacité */}
+                      <Animated.View style={[styles.questionContainer, { opacity: questionOpacityAnim }]}>
+                        <MathRenderer key={`q-${currentQuestionIndex}`} math={currentQuestions[currentQuestionIndex]?.question || ''} fontSize={getFontSizeForQuestion(currentQuestions[currentQuestionIndex]?.question) * 0.6} color="#333" />
+                      </Animated.View>
+                      
+                      <TouchableOpacity onPress={repeatQuestion} style={styles.iconButton}><Text style={styles.menuButtonText}>🔊</Text></TouchableOpacity>
+                      <TouchableOpacity onPress={handleReturnToMenu} style={styles.iconButton}><Text style={styles.menuButtonText}>Menu</Text></TouchableOpacity>
+                    </View>
+
+                    {/* Blocs de réponse */}
+                    {answerBlocks.map((b) => (
+                      <Animated.View
+                        key={b.id}
+                        style={[
+                          styles.rect,
+                          {
+                            left: b.animX,
+                            top: b.animY,
+                            backgroundColor: b.isHit ? (b.isCorrect ? '#4CAF50' : '#F44336') : '#ff7043',
+                            transform: [{ scale: b.scaleAnim }],
+                            opacity: b.opacityAnim, // Opacité animée
+                          },
+                        ]}
+                      >
+                        <MathRenderer math={b.text} color="white" fontSize={getFontSizeForAnswer(b.text)} style={{ flexWrap: 'wrap' }} />
+                      </Animated.View>
+                    ))}
+
+                    {/* AJOUTEZ CE BLOC DE CODE ICI */}
+                    {projectiles.map(p => (
+                      <Animated.Image
+                        key={p.id}
+                        source={fireballImage}
+                        style={{
+                          position: 'absolute',
+                          left: p.x,
+                          top: p.anim, // p.anim est la valeur Y animée
+                          width: 40,
+                          height: 40,
+                          zIndex: 15
+                        }}
+                        resizeMode="contain"
+                      />
+                    ))}
+                    {/* FIN DU BLOC À AJOUTER */}
+
+                    {/* Textes flottants (Bravo, Incorrect, etc.) */}
+                    {floatingTexts.map((ft) => {
+                      const translateY = ft.anim.interpolate({ inputRange: [0, 1], outputRange: [0, -80] });
+                      const opacity = ft.anim.interpolate({ inputRange: [0, 0.7, 1], outputRange: [1, 1, 0] });
+                      return (
+                        <Animated.Text key={ft.id} style={[styles.floatingText, { left: ft.x, top: ft.y, color: ft.color, opacity: opacity, transform: [{ translateY }] }]}>
+                          {ft.text}
+                        </Animated.Text>
+                      );
+                    })}
+
+                    {/* Personnage */}
+                    <Animated.View style={{ position: 'absolute', left: playerX, top: playerY, width: FRAME_WIDTH, height: FRAME_HEIGHT, overflow: 'hidden', zIndex: 10 }}>
+                      <Image source={zadiSprite} style={{ width: FRAME_WIDTH * TOTAL_SPRITE_FRAMES, height: FRAME_HEIGHT, transform: [{ translateX: -frameIndex * FRAME_WIDTH }] }} resizeMode="stretch" />
+                    </Animated.View>
+
+                    {/* Sol et Contrôles */}
+                    <View style={[styles.ground, { width: screen.width, height: GROUND_HEIGHT, bottom: 0 }]} />
+                    <View style={styles.controlsContainer} pointerEvents="box-none">
+                      {currentQuestions[currentQuestionIndex]?.imgKey && questionImages[currentQuestions[currentQuestionIndex].imgKey] && (
+                        <Image source={questionImages[currentQuestionIndex].imgKey} style={styles.questionImage} resizeMode="contain" />
+                      )}
+                      <TouchableOpacity style={styles.controlButton} onPressIn={() => setMoveDirection('left')} onPressOut={() => setMoveDirection(null)}>
+                        <Text style={styles.controlButtonText}>{'◀'}</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={[styles.controlButton, { backgroundColor: '#e53935' }]} onPress={handlePower}>
+                        <Text style={styles.controlButtonText} >🔥</Text>
+                      </TouchableOpacity>
+                      <View style={{ flex: 1 }} />
+                      <TouchableOpacity style={[styles.controlButton, styles.jumpButton]} onPress={jump}>
+                        <Text style={styles.controlButtonText}>{'▲'}</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.controlButton} onPressIn={() => setMoveDirection('right')} onPressOut={() => setMoveDirection(null)}>
+                        <Text style={styles.controlButtonText}>{'▶'}</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                  </View>
+                </ImageBackground>
+              </View>
+            );
+          default: return <Text>Erreur: Vue inconnue</Text>;
+      }
+  };
+
+  if (showLicenseScreen) {
+    return <LicenseScreen onLicenseValidated={() => {
+      setIsLicensed(true);
+      setShowLicenseScreen(false);
+      // After validation, navigate to the appropriate screen (menu or user_select)
+      // based on whether a user is already selected.
+      AsyncStorage.getItem('CURRENT_USER').then(storedUser => {
+        setCurrentView(storedUser ? 'menu' : 'user_select');
+      });
+    }} />;
+  }
+
+  if (!isLicensed) {
+    return <LicenseScreen onLicenseValidated={() => {
+      setIsLicensed(true);
+      setShowLicenseScreen(false);
+      AsyncStorage.getItem('CURRENT_USER').then(storedUser => {
+        setCurrentView(storedUser ? 'menu' : 'user_select');
+      });
+    }} />;
   }
 
   return (
-    <View style={{ flex: 1 }}>
-      <Animated.Image source={sky1} style={{ position: 'absolute', width: screen.width, height: screen.height, left: skyOffset, top: 0, zIndex: 0 }} resizeMode="cover" />
-      <Animated.Image source={sky1} style={{ position: 'absolute', width: screen.width, height: screen.height, left: skyOffset + screen.width, top: 0, zIndex: 0 }} resizeMode="cover" />
-      <ImageBackground 
-        source={bgsta} 
-        style={{ position: 'absolute', width: '100%', height: '100%' }} 
-        resizeMode="cover"
-        {...panResponder.panHandlers}
-      >
-        <View style={styles.container}>
-          <View style={styles.uiContainer}>
-            <View style={{flexDirection: 'row', alignItems: 'center'}}>
-              <Text style={styles.scoreText}>Score: {score}</Text>
-              <Text style={styles.livesText}>Vies: {lives} ❤️</Text>
-            </View>
-            <View style={styles.questionContainer}>
-              <MathRenderer
-                key={`question-${currentQuestionIndex}`}
-                math={currentQuestions[currentQuestionIndex]?.question || ''}
-                fontSize={Math.floor(getFontSizeForQuestion(currentQuestions[currentQuestionIndex]?.question) * 0.6)}
-                color="#333"
-              />
-            </View>
-            <View style={styles.topRightButtonsContainer}>
-              <TouchableOpacity onPress={repeatQuestion} style={styles.iconButton}>
-                  <Text style={styles.iconText}>🔊</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => setSelectedChapter(null)} style={styles.iconButton}>
-                  <Text style={styles.menuButtonText}>Menu</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-          {answerBlocks.map((block) => (
-            <Animated.View 
-                key={`block-${currentQuestionIndex}-${block.id}`} 
-                style={[ styles.rect, { left: block.animX, top: block.animY, backgroundColor: block.isHit ? (block.isCorrect ? '#4CAF50' : '#F44336') : '#ff7043' } ]}
-            >
-              <MathRenderer
-                math={block.text}
-                color="white"
-                fontSize={getFontSizeForAnswer(block.text)}
-                style={{ textAlignVertical: 'center' }}
-              />
-            </Animated.View>
-          ))}
-          {projectiles.map((proj) => (
-            <Animated.Image 
-              key={proj.id} 
-              source={fireballImage}
-              style={{ 
-                position: 'absolute',
-                width: 40,  // Taille de la boule de feu
-                height: 40, // Taille de la boule de feu
-                left: proj.x, 
-                top: proj.anim,
-                zIndex: 5
-              }} 
-            />
-          ))}
-          <Animated.View style={{ position: 'absolute', left: playerX, top: playerY, width: FRAME_WIDTH, height: FRAME_HEIGHT, overflow: 'hidden', zIndex: 10 }}>
-            <Image source={zadiSprite} style={{ width: FRAME_WIDTH * TOTAL_SPRITE_FRAMES, height: FRAME_HEIGHT, transform: [{ translateX: -frameIndex * FRAME_WIDTH }] }} resizeMode="stretch" />
-          </Animated.View>
-          <View style={[styles.ground, { width: screen.width, height: GROUND_HEIGHT, bottom: 0 }]} />
-          <View style={styles.controlsContainer} pointerEvents="box-none">
-            {/* Affichage de l'image associée à la question */}
-            {currentQuestions[currentQuestionIndex]?.imgKey && questionImages[currentQuestions[currentQuestionIndex].imgKey] && (
-              <Image 
-                source={questionImages[currentQuestions[currentQuestionIndex].imgKey]} 
-                style={styles.questionImage}
-                resizeMode="contain"
-              />
-            )}
-            
-            <TouchableOpacity style={[styles.controlButton, styles.leftButton]} onPressIn={() => setMoveDirection('left')} onPressOut={() => setMoveDirection(null)}>
-              <Text style={styles.controlButtonText}>{'◀'}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.controlButton, { backgroundColor: '#e53935', marginLeft: 12 }]} onPress={handlePower}>
-              <Text style={[styles.controlButtonText, { color: '#fff', fontSize: 36 }]}>🔥</Text>
-            </TouchableOpacity>
-            <View style={{ flex: 1 }} />
-            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center' }}>
-              <TouchableOpacity style={[styles.controlButton, styles.jumpButton]} onPress={jump} />
-              <TouchableOpacity style={[styles.controlButton, styles.rightButton]} onPressIn={() => setMoveDirection('right')} onPressOut={() => setMoveDirection(null)}>
-                <Text style={styles.controlButtonText}>{'▶'}</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+    <View style={{ flex: 1, backgroundColor: '#03A6A1' }}>
+      {renderContent()}
+
+      {/* Affichage du compte-à-rebours de la période d'essai */}
+      {onTrial && trialTimeLeft > 0 && (
+        <View style={styles.trialTimerContainer}>
+          <Text style={styles.trialTimerText}>⏳ Essai : {formatTime(trialTimeLeft)}</Text>
         </View>
-      </ImageBackground>
+      )}
     </View>
   );
 }
 
+// Remplacez l'ancien chartConfig par celui-ci
+const chartConfig = {
+    backgroundColor: '#0D47A1', // Un bleu très foncé
+    backgroundGradientFrom: '#0D47A1', // Début du dégradé
+    backgroundGradientTo: '#1976D2', // Fin du dégradé vers un bleu plus clair
+    decimalPlaces: 0, // <--- CHANGEZ LA VALEUR À 0
+    color: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`, // Texte en blanc
+    labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`, // Étiquettes en blanc
+    style: { borderRadius: 16 },
+    propsForDots: { 
+        r: '6', 
+        strokeWidth: '2', 
+        stroke: '#1976D2' // Contour des points assorti au fond
+    }
+};
+
+// --- Dimensions et Styles ---
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+// --- STYLES ---
 const styles = StyleSheet.create({
-  menuContainer: { 
-    flex: 1, 
-    justifyContent: 'center', 
-    alignItems: 'center', 
-    backgroundColor: '#03A6A1', // Nouvelle couleur de fond - bleu foncé élégant
-    paddingTop: 20, 
-    paddingBottom: 20,
-  },
-  menuTitle: { 
-    fontSize: 42, // Plus grand pour plus d'impact
-    fontWeight: '900', // Comme le titre KLATA
-    color: 'rgb(240, 108, 13)', // Orange doré du splash
-    marginBottom: 40, // Plus d'espace
-    textAlign: 'center',
-    textShadowColor: 'rgb(255, 255, 255)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
-    letterSpacing: 3, // Espacement des lettres
-    fontFamily: 'System',
-    // Effet de lueur dorée comme KLATA
-    shadowColor: 'rgb(255, 255, 255)',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  chapterButton: { 
-    backgroundColor: 'rgba(11, 133, 70, 0.9)', // Même orange que "Niveau 3ème"
-    borderRadius: 40, // Plus arrondi
-    paddingVertical: 10, // Plus d'espace vertical
-    paddingHorizontal: 20, // Plus d'espace horizontal
-    marginVertical: 15, // Plus d'espacement entre les boutons
-    width: Dimensions.get('window').width * 0.88, // Légèrement plus large
-    justifyContent: 'center', 
-    alignItems: 'center', 
-    elevation: 12, // Ombre plus prononcée
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    // Bordure dorée subtile
-    borderWidth: 2,
-    borderColor: 'rgb(255, 255, 255)',
-  },
-  chapterButtonText: { 
-    color: 'rgba(255, 255, 255, 0.9)', 
-    fontSize: 22, // Plus grand pour plus de lisibilité
-    fontWeight: 'bold', 
-    textAlign: 'center',
-    textShadowColor: 'rgba(0, 0, 0, 0.5)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 3,
-    letterSpacing: 1,
-    fontFamily: 'System',
-  },
-  container: { flex: 1 },
-  uiContainer: { position: 'absolute', top: 10, width: '100%', paddingHorizontal: 20, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 10 },
-  scoreText: { fontSize: 20, fontWeight: 'bold', color: '#00796b', width: 100 },
-  topRightButtonsContainer: { flexShrink: 0, flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', marginRight: 25 },
-  iconButton: { padding: 8 },
-  iconText: { fontSize: 24 },
-  menuButtonText: { color: '#00796b', fontWeight: 'bold', fontSize: 18 },
-  questionContainer: { flex: 1, minHeight: 80, alignItems: 'center', justifyContent: 'center', marginHorizontal: 10, paddingVertical: 5 },
-  rect: { position: 'absolute', width: 'auto', minWidth: RECT_WIDTH, paddingHorizontal: 15, height: RECT_HEIGHT, backgroundColor: '#ff7043', borderRadius: 8, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#fff' },
-  projectile: { position: 'absolute', width: 20, height: 20, borderRadius: 10, backgroundColor: '#FFD600', borderWidth: 3, borderColor: '#fff', zIndex: 5 },
-  projectile: {
-    position: 'absolute',
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: '#FFEB3B',
-    zIndex: 5,
-  },
-  ground: { position: 'absolute', left: 0, backgroundColor: '#388e3c', borderTopLeftRadius: 12, borderTopRightRadius: 12, zIndex: 1 },
-  controlsContainer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    padding: 20,
-    zIndex: 10,
-  },
-  controlButton: { backgroundColor: '#fff', borderRadius: 40, width: 80, height: 80, justifyContent: 'center', alignItems: 'center', elevation: 4, borderWidth: 2, borderColor: '#1976d2', opacity: 0.4 },
-  controlButtonText: { fontSize: 32, color: '#1976d2', fontWeight: 'bold' },
-  leftButton: { alignSelf: 'flex-start' },
-  jumpButton: { backgroundColor: '#FFD600', borderWidth: 0, borderColor: 'transparent', marginHorizontal: 16 },
-  rightButton: { alignSelf: 'flex-end' },
-  livesText: { fontSize: 20, fontWeight: 'bold', color: '#d32f2f', marginLeft: 15 },
-  gameOverContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fafafa', padding: 20 },
-  gameOverTitle: { fontSize: 48, fontWeight: 'bold', color: '#c62828', marginBottom: 20 },
-  finalScoreText: { fontSize: 24, color: '#37474f', marginBottom: 10 },
-  finalScoreTextSmall: { fontSize: 18, color: '#37474f', marginBottom: 8, textAlign: 'center' },
-  missedQuestionsTitle: { fontSize: 22, fontWeight: 'bold', marginBottom: 15, alignSelf: 'center' },
-  missedQuestionContainer: { marginBottom: 20, padding: 10, backgroundColor: '#fff', borderRadius: 8, width: '90%', alignSelf: 'center' },
-  restartButton: { backgroundColor: '#1976d2', paddingVertical: 15, paddingHorizontal: 30, borderRadius: 10, marginTop: 20 },
-  restartButtonText: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
-  noMissedQuestionsText: { fontSize: 18, color: 'green', fontStyle: 'italic', textAlign: 'center', marginTop: 20 },
-  questionImage: { 
-    position: 'absolute',
-    bottom: 90, 
-    left: 35, 
-    width: 167, 
-    height: 167,
-    borderRadius: 8,
-    zIndex: 3,
-    borderWidth: 3,
-    borderColor: '#4CAF50'
-  },
-  splashContainer: {
-    flex: 1,
-    backgroundColor: '#fff',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  splashImage: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    width: '100%',
-    height: '100%',
-  },
-  splashOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.12)', // Réduit de 0.6 à 0.3 pour plus de visibilité
-    justifyContent: 'center',
-    alignItems: 'center',
-    // Ajout d'un dégradé radial pour plus de profondeur
-    backgroundGradient: {
-      colors: ['rgba(0, 0, 0, 0.3)', 'rgba(0, 0, 0, 0.7)'],
-      locations: [0, 1],
-    },
-  },
-  splashTitle: {
-    fontSize: 60,
-    fontWeight: '900',
-    color: '#fff',
-    marginBottom: 15,
-    textAlign: 'center',
-    textShadowColor: 'rgba(0, 0, 0, 0.8)',
-    textShadowOffset: { width: 3, height: 3 },
-    textShadowRadius: 8,
-    letterSpacing: 8,
-    fontFamily: 'System',
-    // Ajout d'un effet de lueur
-    shadowColor: '#FFD600',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    elevation: 10,
-  },
-  splashSlogan: {
-    fontSize: 18,
-    color: '#FFD600',
-    marginBottom: 20,
-    textAlign: 'center',
-    fontStyle: 'italic',
-    fontWeight: '600',
-    textShadowColor: 'rgba(0, 0, 0, 0.6)',
-    textShadowOffset: { width: 2, height: 2 },
-    textShadowRadius: 4,
-    letterSpacing: 2,
-  },
-  splashSubtitle: {
-    fontSize: 32,
-    color: '#fff',
-    marginBottom: 15,
-    textAlign: 'center',
-    fontWeight: 'bold',
-    textShadowColor: 'rgba(0, 0, 0, 0.7)',
-    textShadowOffset: { width: 2, height: 2 },
-    textShadowRadius: 6,
-    letterSpacing: 3,
-  },
-  splashLevel: {
-    fontSize: 20,
-    color: '#fff',
-    marginBottom: 140, // Réduit de 100 à 30 pour remonter le niveau
-    textAlign: 'center',
-    fontWeight: '500',
-    textShadowColor: 'rgba(0, 0, 0, 0.6)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 3,
-    backgroundColor: 'rgba(241, 95, 11, 0.9)',
-    paddingHorizontal: 20,
-    paddingVertical: 8,
-    borderRadius: 15,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
-  },
-  splashCredits: {
-    position: 'absolute',
-    bottom: 40, // Réduit de 60 à 40 pour être plus bas
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.4)',
-    paddingVertical: 15,
+  // Styles pour la gestion des utilisateurs et le profil
+  userSelectContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#03A6A1', padding: 20 },
+  userInput: { width: '80%', height: 50, backgroundColor: 'white', borderRadius: 10, paddingHorizontal: 15, fontSize: 18, marginBottom: 20, textAlign: 'center' },
+  userButton: { backgroundColor: 'rgba(11, 133, 70, 0.9)', borderRadius: 25, paddingVertical: 15, paddingHorizontal: 30, marginVertical: 10, width: '80%', alignItems: 'center' },
+  userButtonText: { color: 'white', fontSize: 18, fontWeight: 'bold' },
+  switchUserText: { color: 'white', marginTop: 20, fontStyle: 'italic' },
+  currentUserText: { marginTop: 12, color: '#fff', fontStyle: 'italic', fontSize: 16 },
+  profileButton: {
+    backgroundColor: '#d214a7',
+    paddingVertical: 10,
     paddingHorizontal: 20,
     borderRadius: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    marginVertical: 0,
+    width: '17%', // Réduction de la largeur
+    alignSelf: 'center', // Centrage horizontal
+    alignItems: 'center',
   },
-  splashCreditText: {
-    fontSize: 16,
+  profileButtonText: {
     color: '#fff',
-    marginBottom: 8,
-    textAlign: 'center',
-    fontWeight: '500',
-    textShadowColor: 'rgba(0, 0, 0, 0.5)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
+    fontSize: 14, // Réduction de la taille du texte
+    fontWeight: '600',
   },
-  splashDateText: {
-    fontSize: 14,
-    color: '#ccc',
-    textAlign: 'center',
-    fontStyle: 'italic',
-    textShadowColor: 'rgba(0, 0, 0, 0.4)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
-  },
-  bilanButton: { 
-    backgroundColor: '#ff9800', 
-    paddingVertical: 12, 
-    paddingHorizontal: 25, 
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  profileContainer: { flexGrow: 1, alignItems: 'center', padding: 20 },
+  profileTitle: { fontSize: 32, fontWeight: 'bold', color: '#005a9c', marginBottom: 20 },
+  profileInfoText: { fontSize: 18, color: '#37474f', marginVertical: 5 },
+  statsContainer: { width: '100%', backgroundColor: 'rgba(255,255,255,0.8)', padding: 15, borderRadius: 10, marginBottom: 20 },
+  statsTitle: { fontSize: 22, fontWeight: 'bold', color: '#00796b', marginBottom: 10 },
+  pickerContainer: { width: '100%', borderWidth: 1, borderColor: '#ccc', borderRadius: 8, marginBottom: 10, backgroundColor: '#fff' },
+  picker: { height: 50, width: '100%' },
+  bestScoreItem: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
+  bestScoreChapter: { fontSize: 16, color: '#333', flex: 1 },
+  bestScoreValue: { fontSize: 16, fontWeight: 'bold', color: '#2e7d32' },
+  historyItem: { backgroundColor: '#fafafa', padding: 15, borderRadius: 6, marginBottom: 10, borderWidth: 1, borderColor: '#e0e0e0' },
+  historyDate: { fontSize: 12, color: '#777', marginBottom: 5 },
+  historyChapter: { fontSize: 16, fontWeight: 'bold', color: '#333', marginBottom: 5 },
+  historyScore: { fontSize: 14, color: '#444' },
+  missedSection: { marginTop: 10, borderTopWidth: 1, borderTopColor: '#ddd', paddingTop: 10 },
+  missedQuestionBox: { marginBottom: 8, padding: 5, backgroundColor: '#fff9f9', borderRadius: 4 },
+  noDataText: { fontStyle: 'italic', color: '#888', textAlign: 'center', paddingVertical: 10 },
+  errorText: { textAlign: 'center', color: 'red', fontSize: 16 },
+  
+  // Styles du menu principal
+  menuContainer: { flex: 1, backgroundColor: 'rgb(255, 255, 255)', paddingTop: 10, paddingHorizontal: 20 },
+  menuTitle: { fontSize: 42, fontWeight: '900', color: 'rgb(8, 106, 67)', marginBottom: 40, textAlign: 'center', textShadowColor: 'rgba(11, 45, 72, 0)', textShadowOffset: { width: 1, height: 1 }, textShadowRadius: 2, letterSpacing: 3 },
+  chapterButton: { backgroundColor: 'rgba(11, 133, 70, 0.9)', borderRadius: 40, paddingVertical: 10, paddingHorizontal: 20, marginVertical: 5, width: '97%', justifyContent: 'center', alignItems: 'center', elevation: 12, borderWidth: 2, borderColor: 'rgb(255, 255, 255)' },
+  chapterButtonText: { color: 'rgba(255, 255, 255, 0.9)', fontSize: 22, fontWeight: 'bold', textAlign: 'center', textShadowColor: 'rgba(0, 0, 0, 0.5)', textShadowOffset: { width: 1, height: 1 }, textShadowRadius: 3, letterSpacing: 1 },
+  
+  // Styles généraux et du jeu
+  container: { flex: 1 },
+  uiContainer: { position: 'absolute', top: 10, width: '100%', paddingHorizontal: 20, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 10 },
+  scoreText: { fontSize: 20, fontWeight: 'bold', color: '#00796b' },
+  iconButton: { padding: 8 },
+  menuButtonText: { color: '#00796b', fontWeight: 'bold', fontSize: 18 },
+  questionContainer: { flex: 1, minHeight: 80, alignItems: 'center', justifyContent: 'center', marginHorizontal: 10 },
+  rect: { 
+    position: 'absolute', 
+    width: RECT_WIDTH, 
+    minWidth: RECT_WIDTH, 
+    paddingHorizontal: 10, 
+    paddingVertical: 10,
+    height: RECT_HEIGHT, 
+    backgroundColor: '#ff7043', 
     borderRadius: 8, 
-    marginTop: 15,
-    elevation: 4,
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    borderWidth: 2, 
+    borderColor: '#fff',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
+    shadowOpacity: 0.3,
     shadowRadius: 4,
+    elevation: 5,
+    overflow: 'hidden'
   },
-  bilanButtonText: { 
-    color: '#fff', 
-    fontSize: 16, 
-    fontWeight: 'bold',
-    textAlign: 'center',
-  },
-  bilanContainer: { 
-    flex: 1, 
-    backgroundColor: '#f7f9fc', // Fond plus clair
-    paddingHorizontal: 10,
-  },
-  bilanTitle: { 
-    fontSize: 28, 
-    fontWeight: 'bold', 
-    color: '#005a9c', // Bleu plus foncé
-    textAlign: 'center', 
-    marginVertical: 20,
-  },
-  bilanScrollView: { 
-    flex: 1, 
-  },
-  bilanQuestionContainer: { 
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eef2f7',
-  },
-  bilanQuestionSection: { 
-    flex: 1,
-    paddingRight: 10,
-  },
-  bilanQuestionLabel: { 
-    fontSize: 15, 
-    fontWeight: 'bold', 
-    color: '#c62828', // Rouge
-    marginBottom: 8,
-  },
-  bilanQuestionContent: { 
-    backgroundColor: '#fff', 
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    padding: 15, 
-    borderRadius: 8,
-    minHeight: 100,
-    justifyContent: 'center',
-  },
-  bilanAnswerSection: { 
-    flex: 1,
-    paddingLeft: 10,
-  },
-  bilanAnswerLabel: { 
-    fontSize: 15, 
-    fontWeight: 'bold', 
-    color: '#2e7d32', // Vert
-    marginBottom: 8,
-  },
-  bilanAnswerContent: { 
-    backgroundColor: '#e8f5e9',
-    borderWidth: 1,
-    borderColor: '#c8e6c9',
-    padding: 15, 
-    borderRadius: 8,
-    minHeight: 100,
-    justifyContent: 'center',
-  },
-  bilanNavigation: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 10,
-    marginTop: 15,
-  },
-  bilanNavButton: {
-    backgroundColor: '#1976d2',
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-    elevation: 2,
-  },
-  bilanNavButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  disabledButton: {
-    backgroundColor: '#bdbdbd',
-    elevation: 0,
-  },
-  bilanCounterText: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#37474f',
-    textAlign: 'center',
-    marginTop: 5,
-    marginBottom: 15,
-  },
-  backButton: { 
-    backgroundColor: '#757575', 
-    paddingVertical: 12, 
-    paddingHorizontal: 25, 
-    borderRadius: 8, 
-    alignSelf: 'center',
-    elevation: 2,
-  },
-  backButtonText: { 
-    color: '#fff', 
-    fontSize: 16, 
-    fontWeight: 'bold',
-  },
-  changeUserButtonAbsolute: {
+  ground: { position: 'absolute', left: 0, backgroundColor: '#388e3c', zIndex: 1 },
+  controlsContainer: { position: 'absolute', bottom: 0, left: 0, right: 0, flexDirection: 'row', justifyContent: 'space-around', padding: 20, alignItems: 'center', zIndex: 20 },
+  controlButton: { backgroundColor: '#fff', borderRadius: 40, width: 80, height: 80, justifyContent: 'center', alignItems: 'center', elevation: 4, borderWidth: 2, borderColor: '#1976d2', opacity: 0.6 },
+  controlButtonText: { fontSize: 32, color: '#1976d2', fontWeight: 'bold' },
+  jumpButton: { backgroundColor: '#FFD600', borderWidth: 0 },
+  livesText: { fontSize: 20, fontWeight: 'bold', color: '#d32f2f', marginLeft: 15 },
+  floatingText: { // Style pour le texte flottant
     position: 'absolute',
-    left: 0,
-    top: 0,
-    backgroundColor: '#e53935',
-    paddingVertical: 6,
-    paddingHorizontal: 14,
-    borderRadius: 6,
-    zIndex: 2,
-  },
-  changeUserButtonText: {
-    color: '#fff',
-    fontSize: 13,
+    fontSize: 24,
     fontWeight: 'bold',
+    textShadowColor: 'rgba(0, 0, 0, 0.75)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 3,
+    zIndex: 20
   },
-  menuHeaderRow: {
-    width: '100%',
-    height: 56, // augmenté pour plus de place
-    marginBottom: 10,
+  
+ // Styles des écrans de fin et bilan
+ gameOverContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fafafa', padding: 20 },
+ gameOverTitle: { fontSize: 48, fontWeight: 'bold', marginBottom: 20 },
+ finalScoreTextSmall: { fontSize: 18, color: '#37474f', marginBottom: 8 },
+ restartButton: { backgroundColor: '#2e7d32', paddingVertical: 12, paddingHorizontal: 25, borderRadius: 8, marginTop: 15 },
+ restartButtonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+ questionImage: { position: 'absolute', bottom: 120, left: 35, width: 167, height: 167, borderRadius: 8, zIndex: 3, borderWidth: 3, borderColor: '#4CAF50' },
+ splashContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+ splashImage: { position: 'absolute', width: '100%', height: '100%' },
+ splashOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.12)', justifyContent: 'center', alignItems: 'center' },
+ splashTitle: { fontSize: 60, fontWeight: '900', color: '#fff', textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 3, height: 3 }, textShadowRadius: 8 },
+ splashSlogan: { fontSize: 18, color: '#FFD600', fontStyle: 'italic' },
+ splashSubtitle: { fontSize: 24, fontWeight: 'bold', color: '#fff', textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 2, height: 2 }, textShadowRadius: 6, marginBottom: 10 },
+ splashLevel: { fontSize: 16, color: '#fff', fontStyle: 'italic', marginBottom: 20 },
+ splashCredits: { position: 'absolute', bottom: 20, alignItems: 'center' },
+ splashCreditsText: { fontSize: 12, color: '#fff', opacity: 0.7 },
+ bilanButton: { backgroundColor: '#ff9800', paddingVertical: 12, paddingHorizontal: 25, borderRadius: 8, marginTop: 15, elevation: 4 },
+ bilanButtonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+ bilanContainer: { flex: 1, backgroundColor: '#f7f9fc', padding: 10, justifyContent: 'center' },
+ bilanContentWrapper: { flexDirection: 'column', width: '100%' },
+ bilanTitle: { fontSize: 28, fontWeight: 'bold', color: '#005a9c', textAlign: 'center', marginVertical: 10 },
+ bilanQuestionSection: { minHeight: 100, marginBottom: 10 },
+ bilanQuestionLabel: { fontSize: 15, fontWeight: 'bold', color: '#c62828', marginBottom: 8 },
+ bilanQuestionContent: { flex: 1, backgroundColor: '#fff', borderWidth: 1, borderColor: '#e0e0e0', padding: 15, borderRadius: 8, justifyContent: 'center', flexWrap: 'wrap', minHeight: 80 },
+ bilanAnswerSection: { minHeight: 100, marginBottom: 10 },
+ bilanAnswerLabel: { fontSize: 15, fontWeight: 'bold', color: '#2e7d32', marginBottom: 8 },
+ bilanAnswerContent: { flex: 1, backgroundColor: '#e8f5e9', borderWidth: 1, borderColor: '#c8e6c9', padding: 15, borderRadius: 8, justifyContent: 'center', flexWrap: 'wrap', minHeight: 80 },
+ bilanNavigation: { flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 10, marginTop: 5, width: '100%' },
+ bilanNavButton: { backgroundColor: '#1976d2', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8 },
+ bilanNavButtonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+ disabledButton: { backgroundColor: '#bdbdbd' },
+ bilanCounterText: { fontSize: 18, fontWeight: 'bold', color: '#37474f', textAlign: 'center', marginBottom: 5 },
+ backButton: { backgroundColor: '#757575', paddingVertical: 12, paddingHorizontal: 25, borderRadius: 8, alignSelf: 'center', elevation: 2, marginTop: 10 },
+ backButtonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+ changeUserButtonAbsolute: { position: 'absolute', left: 15, top: 15, backgroundColor: '#e53935', paddingVertical: 6, paddingHorizontal: 14, borderRadius: 6, zIndex: 2 },
+ changeUserButtonText: { color: '#fff', fontSize: 13, fontWeight: 'bold' },
+ menuHeaderRow: { width: '100%', alignItems: 'center', justifyContent: 'center', padding: 10, position: 'relative' },
+
+  // Nouveaux styles pour le tableau
+  tableContainer: {
     marginTop: 10,
-    position: 'relative',
-    justifyContent: 'center',
-    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: '#dfe6e9',
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    overflow: 'hidden',
   },
-  menuTitleAbsoluteCenter: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 0,
-    bottom: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 10, // plus élevé que le bouton
-    pointerEvents: 'none', // pour que le bouton reste cliquable
+  tableHeader: {
+    flexDirection: 'row',
+    backgroundColor: '#f4f6f8',
+    paddingVertical: 10,
+    paddingHorizontal: 5,
+    borderBottomWidth: 2,
+    borderColor: '#dfe6e9',
   },
-  menuTitle: {
-    color: '#222',
+  tableHeaderText: {
     fontWeight: 'bold',
-    fontSize: 26,
-    textAlign: 'center',
+    fontSize: 14,
+    color: '#0D47A1',
   },
+  tableRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start', // Permet aux cellules de s'étendre verticalement
+    paddingHorizontal: 5,
+    paddingVertical: 15,
+    borderBottomWidth: 1,
+    borderColor: '#eef2f5',
+  },
+  tableCell: {
+    fontSize: 14,
+    color: '#2d3436',
+    justifyContent: 'center',
+    flexShrink: 1,
+    flexWrap: 'wrap', // autorise le texte/MathRenderer à passer à la ligne
+  },
+  tableCellFailures: {
+    textAlign: 'center',
+    fontWeight: 'bold',
+    fontSize: 16,
+    color: '#c62828',
+  },
+  replayButton: { backgroundColor: '#e53935', paddingVertical: 12, paddingHorizontal: 25, borderRadius: 8, marginTop: 15 },
+  replayButtonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+
+  // Styles pour le timer d'essai
+  trialTimerContainer: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    zIndex: 200,
+  },
+  trialTimerText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  // Bouton TEST LICENCE
+  resetLicenseButton: { backgroundColor: '#c62828', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 20, marginVertical: 10, width: '40%', alignSelf: 'center', alignItems: 'center' },
+  resetLicenseButtonText: { color: '#fff', fontSize: 14, fontWeight: '600' },
 });
+
+// ---------------------------------------------------------
+//  FONCTION DEBUG : réinitialise essai + licence
+// ---------------------------------------------------------
+const resetTrialAndLicense = async () => {
+  try {
+    await SecureStore.deleteItemAsync('app_license_key');
+    await SecureStore.deleteItemAsync('trial_start_date');
+    setOnTrial(false);
+    setIsLicensed(false);
+    setShowLicenseScreen(true);
+  } catch (e) {
+    console.warn('Erreur reset licence:', e);
+  }
+};
 
 
 
